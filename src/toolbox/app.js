@@ -6,8 +6,9 @@ import generators from './tools/generators.js';
 import text from './tools/text.js';
 import testers from './tools/testers.js';
 import graphics from './tools/graphics.js';
+import mendix from './tools/mendix.js';
 
-export const TOOLS = [...converters, ...encoders, ...formatters, ...generators, ...text, ...testers, ...graphics];
+export const TOOLS = [...mendix, ...converters, ...encoders, ...formatters, ...generators, ...text, ...testers, ...graphics];
 const CATEGORIES = [...new Set(TOOLS.map((t) => t.category))];
 
 const store = {
@@ -33,6 +34,8 @@ function matches(tool, q) {
 
 // Routing lives in memory: the host page belongs to Studio Pro, so the toolbox leaves its URL alone.
 let currentId = '';
+// Passed to every tool; `studioPro` is the Studio Pro API, or null on the standalone page.
+let toolContext = { studioPro: null };
 function go(id) {
   currentId = id;
   route();
@@ -92,7 +95,7 @@ function renderTool(tool) {
   const body = h('div', { class: 'tool-body' });
   const star = h('button', { type: 'button', class: `star${favorites.has(tool.id) ? ' on' : ''}`, title: 'Add to favorites', 'aria-pressed': String(favorites.has(tool.id)), onclick: () => { toggleFavorite(tool.id); star.classList.toggle('on'); star.setAttribute('aria-pressed', String(favorites.has(tool.id))); } }, icon('star'));
   clear(els.main, h('header', { class: 'tool-head' }, h('div', { class: 'tool-icon' }, icon(tool.icon)), h('div', { class: 'grow' }, h('h1', {}, tool.name), h('p', { class: 'lead' }, tool.description)), star), body);
-  const run = tool.render(body);
+  const run = tool.render(body, toolContext);
   bindPersistence(tool, body);
   if (typeof run === 'function') run();
   store.set('last', tool.id);
@@ -125,10 +128,11 @@ const iconButton = (id, label, name) => h('button', { id, type: 'button', class:
 /**
  * Builds the toolbox inside `root`.
  * @param {HTMLElement} root
- * @param {{ hostTheme?: 'light' | 'dark' | null, initialTool?: string }} options
+ * @param {{ hostTheme?: 'light' | 'dark' | null, initialTool?: string, studioPro?: any }} options
  */
-export function mountToolbox(root, { hostTheme: theme = null, initialTool = '' } = {}) {
+export function mountToolbox(root, { hostTheme: theme = null, initialTool = '', studioPro = null } = {}) {
   hostTheme = theme;
+  toolContext = { studioPro };
   els = {
     nav: h('nav', { id: 'nav', 'aria-label': 'Tools' }),
     main: h('main', { id: 'main' }),

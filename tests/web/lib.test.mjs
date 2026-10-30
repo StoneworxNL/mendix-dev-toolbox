@@ -195,3 +195,93 @@ test('x509 certificate decoding matches node', async () => {
   assert.equal(c.extensions.find((e) => e.name === 'Subject Alternative Name').value, 'DNS: toolbox.test, DNS: *.toolbox.test, IP: 127.0.0.1');
   assert.equal(c.version, 3);
 });
+
+// --- Mendix tools ---------------------------------------------------------------
+
+const oql = await lib('oql');
+const dp = await lib('datepattern');
+const mxx = await lib('mxxpath');
+const mxm = await lib('mxmodel');
+const naming = await lib('naming');
+
+test('OQL formatter breaks clauses, columns, joins and conditions', () => {
+  const out = oql.formatOql("select c.Name, count(o.ID) as Orders from Sales.Customer as c left join c/Sales.Order_Customer/Sales.\"Order\" as o where c.IsActive = true and o.Total > -1 group by c.Name order by Orders desc limit 10");
+  assert.equal(out, [
+    'SELECT', '  c.Name,', '  COUNT(o.ID) AS Orders', 'FROM Sales.Customer AS c', '  LEFT JOIN c/Sales.Order_Customer/Sales."Order" AS o',
+    'WHERE c.IsActive = TRUE', '  AND o.Total > -1', 'GROUP BY c.Name', 'ORDER BY Orders DESC', 'LIMIT 10',
+  ].join('\n'));
+  assert.match(oql.formatOql('select x.ID from A.B as x where x.ID in (select y.ID from A.C as y)'), /WHERE x\.ID IN \(\n  SELECT\n    y\.ID\n  FROM A\.C AS y\n\)$/);
+});
+
+test('OQL linter reports v2 rules and common mistakes', () => {
+  const messages = (q) => oql.lintOql(q).map((i) => i.message).join('\n');
+  assert.match(messages('SELECT COUNT(*) FROM Sales.Customer'), /alias/);
+  assert.match(messages('SELECT Total FROM Sales.Order'), /reserved word; quote it: Sales\."Order"/);
+  assert.match(messages('SELECT c.Name AS N FROM A.C AS c JOIN A.D AS d'), /JOIN needs an ON/);
+  assert.match(messages('SELECT c.Name AS N FROM A.C AS c WHERE N = 1'), /column alias/);
+  assert.match(messages("SELECT c.Name FROM A.C AS c WHERE c.Owner = [%CurrentUser%]"), /must be quoted/);
+  assert.match(messages('SELECT c.Name FROM A.C AS c WHERE c.X = NULL'), /IS NULL/);
+  assert.match(messages('SELECT (c.X FROM A.C AS c'), /never closed/);
+  assert.equal(oql.lintOql("SELECT c.Name, c.Age FROM A.C AS c WHERE c.Name LIKE 'A%' ORDER BY c.Name LIMIT 5").length, 0);
+});
+
+test('OQL query builder joins over association paths', () => {
+  const q = oql.buildSelect({ entity: 'Sales.Order', attributes: ['Number'], joins: [{ association: 'Sales.Order_Customer', target: 'Sales.Customer', attributes: ['Number'] }] });
+  assert.equal(q, 'SELECT\n  o.Number,\n  c.Number AS CustomerNumber\nFROM Sales."Order" AS o\n  INNER JOIN o/Sales.Order_Customer/Sales.Customer AS c');
+});
+
+test('date patterns format and parse like SimpleDateFormat', () => {
+  const d = new Date(Date.UTC(2026, 6, 8, 14, 5, 9, 42));
+  assert.equal(dp.formatDate(d, "yyyy-MM-dd'T'HH:mm:ss.SSSXXX", { utc: true }), '2026-07-08T14:05:09.042Z');
+  assert.equal(dp.formatDate(d, "EEEE d MMMM yy, h:mm a 'o''clock'", { utc: true }), "Wednesday 8 July 26, 2:05 PM o'clock");
+  assert.equal(dp.formatDate(d, 'D u k K', { utc: true }), '189 3 14 2');
+  assert.throws(() => dp.formatDate(d, 'yyyy-MM-ddTHH'), /Illegal pattern character "T"/);
+  assert.equal(dp.parseDate('2026-07-08T16:05:09+02:00', "yyyy-MM-dd'T'HH:mm:ssXXX").toISOString(), '2026-07-08T14:05:09.000Z');
+  assert.equal(dp.parseDate('20260708', 'yyyyMMdd', { utc: true }).toISOString(), '2026-07-08T00:00:00.000Z');
+  assert.equal(dp.parseDate('8 Jul 26 2:05 PM', 'd MMM yy h:mm a', { utc: true, now: d }).toISOString(), '2026-07-08T14:05:00.000Z');
+  assert.equal(dp.mendixLiteral("yyyy-MM-dd'T'HH"), "'yyyy-MM-dd''T''HH'");
+});
+
+test('XPath date tokens evaluate and constraints are checked', () => {
+  const now = new Date(2026, 9, 30, 15, 20);
+  const r = mxx.evaluateDateExpression('[%BeginOfCurrentDay%] - 3 * [%YearLength%] + [%HourLength%]', { now });
+  assert.deepEqual([r.getFullYear(), r.getMonth(), r.getDate(), r.getHours()], [2023, 9, 30, 1]);
+  const week = mxx.resolveDateToken('BeginOfCurrentWeek', { now, firstDay: 1 });
+  assert.deepEqual([week.getDate(), week.getHours()], [26, 0]);
+  assert.throws(() => mxx.evaluateDateExpression('[%BeginOfCurrentDay%] - (3 * [%DayLength%])', { now }), /Parentheses/);
+  const { issues, dates } = mxx.lintConstraint("[Owner = [%CurrentUser%] && Name = 'x'][Due < '[%CurrentDateTime%] + [%WeekLength%]']", { now });
+  assert.match(issues.map((i) => i.message).join('\n'), /Put tokens in quotes[\s\S]*Use and instead of &&/);
+  assert.equal(dates.length, 1);
+  assert.equal(mxx.relativeDateConstraint({ attribute: 'Due', operator: '<', base: 'EndOfCurrentDay', amount: 2, period: 'DayLength' }), "[Due < '[%EndOfCurrentDay%] + 2 * [%DayLength%]']");
+  assert.equal(mxx.lintConstraint("[Name = 'x' or contains(Code, 'A')][IsActive = true()]").issues.length, 0);
+});
+
+test('domain model normalizes and documents as Mermaid and Markdown', () => {
+  const model = mxm.normalizeModel(mxm.SAMPLE_UNITS, mxm.SAMPLE_ENUMERATIONS);
+  const assoc = model.associations.find((a) => a.name === 'Order_Customer');
+  assert.deepEqual([assoc.parent, assoc.child], ['Sales.Order', 'Sales.Customer']);
+  assert.equal(model.entities.find((e) => e.name === 'OrderSearch').persistable, false);
+  const mermaid = mxm.toMermaid(model, { modules: ['Sales'] });
+  assert.match(mermaid, /Sales_Order \}o--o\| Sales_Customer : "Order_Customer"/);
+  assert.match(mermaid, /Sales_Customer \|o--o\| Administration_Account/);
+  const md = mxm.toMarkdown(model);
+  assert.match(md, /\| Email \| String\(320\) \|/);
+  assert.match(md, /\*\*OrderStatus\*\*: `Draft`, `Confirmed`/);
+});
+
+test('naming check follows the Mendix conventions', () => {
+  const model = mxm.normalizeModel(mxm.SAMPLE_UNITS, mxm.SAMPLE_ENUMERATIONS);
+  const issues = naming.checkNaming({ documents: mxm.SAMPLE_DOCUMENTS, model, modules: ['Sales', 'my_module'] });
+  const find = (name) => issues.filter((i) => i.name === name);
+  assert.equal(find('ACT_Order_Confirm').length, 0);
+  assert.equal(find('Order_Overview').length, 0);
+  assert.equal(find('Home_Desktop_Default').length, 0);
+  assert.equal(find('IVK_Customer_Save')[0].suggestion, 'ACT_Customer_Save');
+  assert.equal(find('OrderStatus')[0].suggestion, 'ENUM_OrderStatus');
+  assert.equal(find('Customer.customer_type')[0].suggestion, 'CustomerType');
+  assert.equal(find('Customer.Email').length, 0);
+  assert.equal(find('OrderLine._SyncHash').length, 0);
+  assert.equal(find('Customer_Favourite')[0].suggestion, 'Customer_Products');
+  assert.equal(find('my_module')[0].severity, 'warning');
+  assert.throws(() => naming.parseRules('widgets prefixes: W_'), /unknown kind/);
+});
