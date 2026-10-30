@@ -1,3 +1,4 @@
+import { JSONPath } from 'jsonpath-plus';
 import { h, clear, textArea, select, input, field, options, split, status, live, card, kv, button } from '../ui.js';
 
 const C = 'Testers';
@@ -18,7 +19,7 @@ const jsonPath = {
       out.value = '';
       if (!expr.value.trim() || !src.value.trim()) return;
       const json = JSON.parse(src.value);
-      const result = JSONPath.JSONPath({ path: expr.value, json, resultType: show.value, eval: 'safe' });
+      const result = JSONPath({ path: expr.value, json, resultType: show.value, eval: 'safe' });
       out.value = show.value === 'value' ? JSON.stringify(result, null, 2) : result.join('\n');
       stat.info(`${result.length} result${result.length === 1 ? '' : 's'}`);
     }, stat);
@@ -70,9 +71,26 @@ const xpath = {
   },
 };
 
+// libxml2 compiled to WebAssembly. It ships as static files next to the bundle (see build.mjs),
+// because it starts its own module worker and loads the .wasm relative to itself.
+let xmllint;
+async function validateXsd(xml, xsd) {
+  xmllint ??= import(/* @vite-ignore */ new URL('./xmllint/index-browser.mjs', import.meta.url).href);
+  const { validateXML } = await xmllint;
+  try {
+    return await validateXML({ xml: [{ fileName: 'document.xml', contents: xml }], schema: [{ fileName: 'schema.xsd', contents: xsd }] });
+  } catch (e) {
+    // A broken schema rejects instead of reporting validation errors.
+    return { valid: false, errors: String(e.message ?? e).split('\n').filter((l) => l.trim() && !/fails to compile|failed to compile/.test(l)).map((line) => {
+      const m = /^([^:]+):(\d+): (.*)$/.exec(line);
+      return m ? { loc: { fileName: m[1], lineNumber: Number(m[2]) }, message: m[3] } : { loc: null, message: line };
+    }) };
+  }
+}
+
 const xsd = {
   id: 'xsd', name: 'XML / XSD validator', category: C, icon: 'check',
-  description: 'Check XML against an XSD schema, with line numbers for every error. Runs in Studio Pro.',
+  description: 'Check XML against an XSD schema with libxml2, with line numbers for every error.',
   keywords: 'schema validate xsd xml wsdl import mapping',
   render(root) {
     const xml = textArea({ label: 'XML', persist: 'xml', value: '<order id="7">\n  <customer>Jane</customer>\n  <total>12.50</total>\n</order>' });
@@ -86,16 +104,11 @@ const xsd = {
       parseXml(xml.value, 'XML');
       if (!schema.value.trim()) { stat.ok('Well-formed XML. Add a schema to validate it.'); return; }
       parseXml(schema.value, 'Schema');
-      let res;
-      try {
-        res = await fetch('api/validate-xsd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ xml: xml.value, xsd: schema.value }) });
-      } catch { res = null; }
-      if (!res?.ok) { stat.info('Well-formed XML. Schema validation runs inside Studio Pro (it uses .NET), so open this tool there to validate against the XSD.'); return; }
-      const { valid, errors } = await res.json();
+      const { valid, errors } = await validateXsd(xml.value, schema.value);
       if (valid) { stat.ok('Valid: the XML matches the schema.'); return; }
       stat.error(`${errors.length} validation error${errors.length === 1 ? '' : 's'}`);
-      results.append(card('Errors', h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, 'Line'), h('th', {}, 'Column'), h('th', {}, 'Severity'), h('th', {}, 'Message'))),
-        h('tbody', {}, errors.map((e) => h('tr', {}, h('td', {}, e.line), h('td', {}, e.column), h('td', {}, e.severity), h('td', {}, e.message)))))));
+      results.append(card('Errors', h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, 'File'), h('th', {}, 'Line'), h('th', {}, 'Message'))),
+        h('tbody', {}, errors.map((e) => h('tr', {}, h('td', {}, e.loc?.fileName ?? ''), h('td', {}, e.loc?.lineNumber ?? ''), h('td', {}, e.message.replace(/^element \S+: /, ''))))))));
     }, stat);
   },
 };

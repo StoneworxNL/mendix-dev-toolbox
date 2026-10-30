@@ -1,3 +1,4 @@
+import { format as formatSql } from 'sql-formatter';
 import { clear, textArea, select, checkbox, field, options, split, status, live } from '../ui.js';
 import { formatXml, minifyXml } from '../lib/xml.js';
 import { sortDeep } from './converters.js';
@@ -55,7 +56,7 @@ const sql = {
     clear(root, options(field('Dialect', dialect), field('Keyword case', keywordCase), field('Indent', indent), field('Lines between queries', lines)), stat.root, split(src.root, out.root));
     return live(root, () => {
       if (!src.value.trim()) { out.value = ''; return; }
-      out.value = sqlFormatter.format(src.value, {
+      out.value = formatSql(src.value, {
         language: dialect.value, keywordCase: keywordCase.value,
         tabWidth: indent.value === 'tab' ? 2 : Number(indent.value), useTabs: indent.value === 'tab',
         linesBetweenQueries: Number(lines.value),

@@ -1,0 +1,14 @@
+{
+  "mendixComponent": {
+    "entryPoints": {
+      "main": "main.js",
+      "ui": {
+        "tab": "tab.js",
+        "pane": "pane.js"
+      }
+    },
+    "permissions": {
+      "runtime-configuration-private": false
+    }
+  }
+}
