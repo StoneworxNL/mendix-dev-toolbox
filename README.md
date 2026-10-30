@@ -1,6 +1,6 @@
 # Developer Toolbox for Mendix Studio Pro
 
-A Studio Pro extension with 31 DevToys-style developer utilities, available as a tab or a dockable pane. Everything runs locally inside Studio Pro, so pasted tokens, certificates and data never leave your machine.
+A Studio Pro web extension with 31 DevToys-style developer utilities, available as a tab or a docked pane. Everything runs locally inside Studio Pro, so pasted tokens, certificates and data never leave your machine.
 
 | Category | Tools |
 | --- | --- |
@@ -9,43 +9,53 @@ A Studio Pro extension with 31 DevToys-style developer utilities, available as a
 | Formatters | JSON (indent, minify, sort keys, error line/column) · SQL (14 dialects) · XML (pretty-print, minify, well-formedness) |
 | Generators | Hash & checksum (MD5, SHA-1/256/384/512, HMAC, files, SRI, compare) · UUID v1/v4/v7 (bulk, inspect) · Lorem ipsum · Passwords (entropy estimate) |
 | Text | Escape/unescape (JSON, C#, regex, SQL, XML, CSV, Mendix) · Analyzer & case conversion (incl. Mendix_Name) and line tools · Text compare (side-by-side, inline, word highlights, unified patch) · Markdown preview · Regex tester (groups, replace) |
-| Testers | JSONPath · XPath · XML/XSD validation (runs in .NET inside Studio Pro) |
+| Testers | JSONPath · XPath · XML/XSD validation (libxml2 compiled to WebAssembly) |
 | Graphics | Color picker & WCAG contrast · Color blindness simulator · Image converter (PNG/JPEG/WebP, resize, compress, batch) |
 
-Favorites, last inputs and the light/dark theme are remembered per tool. `Ctrl+K` or `/` jumps to the search box.
+Favorites and last inputs are remembered per tool. The theme follows Studio Pro's light/dark setting unless you pick one. `Ctrl+K` or `/` jumps to the search box.
 
 ## Install
 
-Requires Studio Pro 11.12 or later (the extension targets .NET 10, like Studio Pro 11.12).
+Built on the [Web Extensibility API](https://docs.mendix.com/apidocs-mxsdk/apidocs/web-extensibility-api-11/) for Studio Pro 11.12 and later. Needs Node.js 22.
 
 1. Build and copy the extension into your app:
    ```powershell
-   ./scripts/install.ps1 -AppDir "C:\Users\me\Mendix\MyApp"
+   npm ci
+   npm run build -- --app "C:\Users\me\Mendix\MyApp"
    ```
-   This puts `Stoneworx.DevToolbox.dll` and `manifest.json` in `MyApp\extensions\DevToolbox\`. You can also unzip a release `DevToolbox-x.y.z.zip` there.
-2. Start Studio Pro with extension development enabled, which unpublished extensions need:
+   This writes `dist/devtoolbox` and copies it to `MyApp\extensions\devtoolbox\`. The folder name must stay `devtoolbox`, because the extension opens its UI as `extension/devtoolbox`.
+2. Turn on extension development, which unpublished extensions need: either enable **Extension Development** in Studio Pro's preferences, or start Studio Pro with the flags:
    ```powershell
-   & "C:\Program Files\Mendix\11.12.6\modeler\studiopro.exe" --enable-extension-development
+   & "C:\Program Files\Mendix\11.12.6\modeler\studiopro.exe" "C:\Users\me\Mendix\MyApp\MyApp.mpr" --enable-extension-development --enable-web-extensions
    ```
-3. Open the app and choose **Extensions → Open Developer Toolbox** (or **…as pane** to dock it next to your editor).
+3. Choose **Extensions → Developer Toolbox → Open in a tab** (or **Open as a docked pane**).
 
 ## Develop
 
-The UI is plain HTML, CSS and ES modules in `src/DevToolbox/wwwroot`, embedded into the DLL and served by Studio Pro's built-in web server. There is no front-end build step. Third-party libraries are vendored in `wwwroot/vendor` (versions and licenses in `VERSIONS.txt`).
-
 ```bash
-dotnet run --project tools/DevHost           # serves the UI at http://localhost:5299/dev-toolbox/index.html
-dotnet test DevToolbox.slnx                  # C#: XSD validator and request handler
-node --test tests/web/*.test.mjs             # JS: tool logic (encoders, cron, JWT, X.509, colors, …)
-node tests/ui/smoke.mjs                      # opens every tool in headless Chromium (needs Playwright and the dev host)
-./scripts/package.sh                         # dist/DevToolbox-<version>.zip
+npm run serve        # the toolbox in a browser at http://localhost:5299/ (rebuilds on change)
+npm run watch        # rebuild the extension on change; add -- --app <app folder> to redeploy into an app
+npm test             # tool logic: encoders, cron, JWT, X.509, colors, …
+npm run test:ui      # opens every tool in headless Chromium; needs Playwright and `npm run serve`
 ```
 
-The dev host reuses the extension's own request handler, so the XSD endpoint works there too. Embedded files are only refreshed on rebuild, so restart the dev host after changing `wwwroot`.
+In the browser, `?tool=<id>` opens a tool directly and `?theme=dark` pretends Studio Pro is in dark mode.
+
+### Layout
+
+```
+src/manifest.json     entry points: main (menu), tab and pane (UI)
+src/main/index.js     registers the Extensions menu, the tab and the docked pane
+src/ui/               tab and pane entry points; inject styles, read Studio Pro's theme, mount the toolbox
+src/toolbox/          the toolbox itself: app shell, UI helpers, tools/ and testable lib/
+dev/                  standalone page for working on the toolbox in a browser
+build.mjs             esbuild build; copies the manifest and libxml2 (xmllint-wasm) next to the bundle
+tests/                node unit tests and the browser smoke test
+```
 
 ### Adding a tool
 
-Add an object to one of the arrays in `wwwroot/js/tools/*.js`:
+Add an object to one of the arrays in `src/toolbox/tools/*.js`:
 
 ```js
 {
@@ -62,17 +72,4 @@ Add an object to one of the arrays in `wwwroot/js/tools/*.js`:
 }
 ```
 
-Keep logic that can be tested without a browser in `wwwroot/js/lib/` and cover it in `tests/web`.
-
-## Layout
-
-```
-src/DevToolbox/          the extension
-  DevToolboxMenu.cs      Extensions menu entries
-  DevToolboxPane.cs      dockable pane and tab view models (WebView)
-  DevToolboxWebServer.cs serves wwwroot and the /api/validate-xsd endpoint
-  XsdValidator.cs        schema validation with DTDs and external resolution disabled
-  wwwroot/               the web UI
-tests/                   .NET, JS and browser tests
-tools/DevHost/           standalone host for working on the UI in a browser
-```
+Keep logic that can be tested without a browser in `src/toolbox/lib/` and cover it in `tests/web`.

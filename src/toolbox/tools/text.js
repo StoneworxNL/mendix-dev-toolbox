@@ -1,3 +1,6 @@
+import * as Diff from 'diff';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, copyText } from '../ui.js';
 import { ESCAPE_MODES, escapeText, unescapeText } from '../lib/encoding.js';
 import { CASES, LINE_ACTIONS, analyze } from '../lib/textcase.js';

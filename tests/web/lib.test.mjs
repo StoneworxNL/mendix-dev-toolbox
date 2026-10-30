@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const lib = (name) => import(new URL(`../../src/DevToolbox/wwwroot/js/lib/${name}.js`, import.meta.url));
+const lib = (name) => import(new URL(`../../src/toolbox/lib/${name}.js`, import.meta.url));
 const enc = await lib('encoding');
 const { md5 } = await lib('md5');
 const tc = await lib('textcase');

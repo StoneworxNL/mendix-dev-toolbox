@@ -1,0 +1,30 @@
+{
+  "name": "devtoolbox",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "DevToys-style developer utilities as a Mendix Studio Pro web extension",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "serve": "node build.mjs --serve",
+    "test": "node --test tests/web/*.test.mjs",
+    "test:ui": "node tests/ui/smoke.mjs"
+  },
+  "dependencies": {
+    "@mendix/extensions-api": "0.11.6-mendix.11.12.6",
+    "cronstrue": "3.38.0",
+    "diff": "9.0.0",
+    "dompurify": "3.4.17",
+    "js-yaml": "4.1.0",
+    "jsonpath-plus": "11.2.2",
+    "marked": "18.1.2",
+    "qrcode-generator": "2.0.4",
+    "sql-formatter": "15.9.0",
+    "xmllint-wasm": "5.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.5"
+  }
+}

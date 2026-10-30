@@ -1,12 +1,12 @@
 // Opens every tool in headless Chromium, feeds it sample input and fails on script errors.
-// Start the dev host first: dotnet run --project tools/DevHost
+// Start the dev server first: npm run serve
 // Usage: node tests/ui/smoke.mjs [baseUrl] [screenshotDir]
 import { createRequire } from 'node:module';
 
 // require() so a globally installed Playwright (NODE_PATH) works too.
 const { chromium } = createRequire(import.meta.url)('playwright');
 
-const base = process.argv[2] ?? 'http://localhost:5299/dev-toolbox/index.html';
+const base = process.argv[2] ?? 'http://localhost:5299/';
 const shots = process.argv[3];
 
 const SAMPLES = {
@@ -47,14 +47,14 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => m.type() === 'error' && errors.push(`console: ${m.text()}`));
 await page.goto(base);
-const ids = await page.$$eval('.tile', (tiles) => [...new Set(tiles.map((t) => t.getAttribute('href').slice(2)))]);
+const ids = await page.$$eval('.tile', (tiles) => [...new Set(tiles.map((t) => t.dataset.tool))]);
 console.log(`${ids.length} tools`);
 if (shots) await page.screenshot({ path: `${shots}/home.png` });
 
 let failed = 0;
 for (const id of ids) {
   const before = errors.length;
-  await page.goto(`${base}#/${id}`);
+  await page.goto(`${base}?tool=${id}`);
   await page.waitForSelector('.tool-body > *');
   const [input, outputRe, expectText] = SAMPLES[id] ?? [];
   if (id === 'diff') {
@@ -86,7 +86,7 @@ for (const id of ids) {
 
 // Narrow viewport, like a docked pane.
 await page.setViewportSize({ width: 420, height: 800 });
-await page.goto(`${base}#/json-format`);
+await page.goto(`${base}?tool=json-format`);
 await page.waitForTimeout(400);
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
 if (overflow) { console.log('FAIL narrow layout scrolls horizontally'); failed++; }

@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="src/DevToolbox/DevToolbox.csproj" />
-  <Project Path="tests/DevToolbox.Tests/DevToolbox.Tests.csproj" />
-  <Project Path="tools/DevHost/DevHost.csproj" />
-</Solution>

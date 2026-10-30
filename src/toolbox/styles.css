@@ -34,7 +34,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--text); font: 13px/1.45 var(--sans); }
 a { color: var(--accent); }
 .mono, code, pre, textarea.code, input.mono { font-family: var(--mono); font-size: 12.5px; }

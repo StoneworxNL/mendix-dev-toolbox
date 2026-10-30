@@ -1,3 +1,4 @@
+import qrcode from 'qrcode-generator';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, fileDrop, download, readFile, formatBytes, copyText } from '../ui.js';
 import { utf8Encode, utf8Decode, bytesToBase64, base64ToBytes, bytesToHex, htmlEncode, htmlDecode } from '../lib/encoding.js';
 import { decodeJwt, signJwt, verifyJwt, CLAIMS } from '../lib/jwt.js';
