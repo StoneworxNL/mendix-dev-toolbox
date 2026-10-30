@@ -18,6 +18,7 @@ async function hmac(alg, keyText, bytes) {
 
 const hash = {
   id: 'hash', name: 'Hash & checksum', category: C, icon: 'fingerprint',
+  sensitive: true,
   description: 'MD5, SHA-1, SHA-256, SHA-384 and SHA-512 of text or files, HMAC, and checksum comparison.',
   keywords: 'md5 sha sha1 sha256 sha512 hmac digest checksum integrity sri',
   render(root) {

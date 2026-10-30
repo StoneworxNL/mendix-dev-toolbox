@@ -70,7 +70,7 @@ if (flag('serve')) {
   const ctx = await esbuild.context({ ...common, outdir: dir, entryPoints: { standalone: 'dev/standalone.js' } });
   await ctx.watch();
   const port = Number(option('serve')) || 5299;
-  await ctx.serve({ servedir: dir, port });
+  await ctx.serve({ servedir: dir, port, host: 'localhost' });
   console.log(`Developer Toolbox: http://localhost:${port}/`);
 } else {
   await rm(outDir, { recursive: true, force: true });

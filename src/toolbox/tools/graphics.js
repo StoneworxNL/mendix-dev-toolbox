@@ -60,7 +60,7 @@ const colorBlind = {
     const stat = status();
     const show = async ([file]) => {
       clear(grid);
-      const { img } = await loadImage(file);
+      const { img, url } = await loadImage(file);
       const max = 900;
       const ratio = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
       const w = Math.round(img.naturalWidth * ratio), hgt = Math.round(img.naturalHeight * ratio);
@@ -76,6 +76,7 @@ const colorBlind = {
       draw('Deuteranopia (no green)', CVD.deuteranopia);
       draw('Tritanopia (no blue)', CVD.tritanopia);
       draw('Achromatopsia (no color)', CVD.achromatopsia);
+      URL.revokeObjectURL(url);
     };
     clear(root, fileDrop({ accept: 'image/*', label: 'Drop an image or screenshot here', onFiles: (f) => show(f).catch((e) => stat.error(e)) }), stat.root, grid);
   },
@@ -112,8 +113,11 @@ const imageConverter = {
     const ext = () => ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' })[format.value];
     const rename = (name) => `${name.replace(/\.[^.]+$/, '')}.${ext()}`;
     let generation = 0;
+    let thumbs = [];
     const run = async () => {
       const mine = ++generation;
+      for (const u of thumbs) URL.revokeObjectURL(u);
+      thumbs = [];
       clear(list);
       quality.disabled = format.value === 'image/png';
       if (!files.length) return;
@@ -122,7 +126,9 @@ const imageConverter = {
         const r = await convertOne(f);
         if (mine !== generation) return;
         before += f.size; after += r.blob.size;
-        const thumb = h('img', { src: URL.createObjectURL(r.blob), alt: f.name });
+        const thumbUrl = URL.createObjectURL(r.blob);
+        thumbs.push(thumbUrl);
+        const thumb = h('img', { src: thumbUrl, alt: f.name });
         list.append(h('div', { class: 'image-item' }, thumb, h('div', {}, h('strong', {}, rename(f.name)), h('div', { class: 'hint' }, `${r.srcW}×${r.srcH} → ${r.w}×${r.hgt} · ${formatBytes(f.size)} → ${formatBytes(r.blob.size)} (${Math.round((r.blob.size / f.size) * 100)}%)`)), button('Download', () => download(r.blob, rename(f.name)), { kind: 'ghost', iconName: 'download' })));
         if (r.blob.type !== format.value) stat.error(`This browser cannot write ${format.selectedOptions[0].text}; it fell back to ${r.blob.type}.`);
       }

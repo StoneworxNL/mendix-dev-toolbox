@@ -106,25 +106,81 @@ const diff = {
   },
 };
 
+// Remote images in the preview would be fetched from the internet, so they stay off unless asked for.
+let allowRemoteImages = false;
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'IMG' && !allowRemoteImages && /^\s*(https?:)?\/\//i.test(node.getAttribute('src') ?? '')) {
+    node.setAttribute('data-blocked-src', node.getAttribute('src'));
+    node.removeAttribute('src');
+    node.removeAttribute('srcset');
+    node.setAttribute('alt', `${node.getAttribute('alt') || 'image'} (remote image not loaded)`);
+  }
+});
+
 const markdown = {
   id: 'markdown', name: 'Markdown preview', category: C, icon: 'markdown',
   description: 'Write GitHub-flavored Markdown and see it rendered; copy the HTML.',
   keywords: 'md readme gfm render html',
   render(root) {
     const src = textArea({ label: 'Markdown', persist: 'input', wrap: true, value: '# Hello Mendix\n\n- [x] Studio Pro extension\n- [ ] Ship it\n\n| Tool | Category |\n| --- | --- |\n| JSON formatter | Formatters |\n\n```js\nconsole.log("hi");\n```\n' });
+    const remote = checkbox('Load remote images', { persist: 'remote' });
+    remote.root.title = 'Images from the internet are fetched only when this is on.';
     const preview = h('article', { class: 'markdown-body' });
     let html = '';
     const head = h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, 'Preview'), h('div', { class: 'pane-tools' }, button('Copy HTML', () => copyText(html), { kind: 'ghost', iconName: 'copy' })));
-    clear(root, split(src.root, h('div', { class: 'pane' }, head, preview)));
+    clear(root, options(remote.root), split(src.root, h('div', { class: 'pane' }, head, preview)));
     return live(root, () => {
-      html = DOMPurify.sanitize(marked.parse(src.value, { gfm: true, breaks: false }));
-      preview.innerHTML = html;
+      const md = marked.parse(src.value, { gfm: true, breaks: false });
+      allowRemoteImages = true;
+      html = DOMPurify.sanitize(md);
+      allowRemoteImages = remote.checked;
+      preview.innerHTML = remote.checked ? html : DOMPurify.sanitize(md);
+      allowRemoteImages = false;
       for (const a of preview.querySelectorAll('a')) { a.target = '_blank'; a.rel = 'noopener'; }
     });
   },
 };
 
 const FLAGS = { g: 'global', i: 'ignore case', m: 'multiline', s: 'dot matches newline', u: 'unicode', y: 'sticky' };
+
+/** Runs a regex over text; self-contained so it can also run in a worker. */
+function matchRegex({ source, flags, text, replacement }) {
+  const re = new RegExp(source, flags);
+  const found = [];
+  if (re.global || re.sticky) {
+    for (const m of text.matchAll(re.global ? re : new RegExp(source, `${flags}g`))) { found.push(m); if (found.length > 5000) break; }
+  } else { const m = re.exec(text); if (m) found.push(m); }
+  const matches = found.map((m) => ({ items: [...m], index: m.index, names: m.groups ? Object.keys(m.groups) : [] }));
+  return { matches, replacedText: replacement ? text.replace(new RegExp(source, flags), replacement) : '' };
+}
+
+// Matching runs in a worker with a time limit, so a pattern with catastrophic backtracking
+// cannot freeze Studio Pro's tab or pane.
+const REGEX_TIMEOUT_MS = 1500;
+let regexWorker = null;
+let pending = null;
+function runRegex(source, flags, text, replacement) {
+  const job = { source, flags, text, replacement };
+  pending?.cancel(); // a newer input replaces the running one
+  if (!regexWorker) {
+    try {
+      const url = URL.createObjectURL(new Blob([`const matchRegex = ${matchRegex.toString()};\nonmessage = ({ data }) => postMessage(matchRegex(data));`], { type: 'text/javascript' }));
+      regexWorker = new Worker(url);
+    } catch {
+      return Promise.resolve(unpack(matchRegex(job))); // workers blocked by the host: run inline
+    }
+  }
+  const worker = regexWorker;
+  return new Promise((resolve, reject) => {
+    const stop = () => { worker.terminate(); if (regexWorker === worker) regexWorker = null; };
+    const timer = setTimeout(() => { stop(); pending = null; reject(new Error(`Stopped after ${REGEX_TIMEOUT_MS / 1000} s: the pattern takes too long on this text (catastrophic backtracking?)`)); }, REGEX_TIMEOUT_MS);
+    pending = { cancel: () => { clearTimeout(timer); stop(); pending = null; } };
+    worker.onmessage = ({ data }) => { clearTimeout(timer); pending = null; resolve(unpack(data)); };
+    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); stop(); pending = null; reject(new Error(e.message)); };
+    worker.postMessage(job);
+  });
+}
+const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index, names: m.names })), replacedText });
 
 const regex = {
   id: 'regex', name: 'Regex tester', category: C, icon: 'regex',
@@ -143,17 +199,14 @@ const regex = {
     const cheats = [['\\d', 'digit'], ['\\w', 'word char'], ['\\s', 'whitespace'], ['.', 'any char'], ['^ $', 'start / end'], ['[abc]', 'set'], ['(…)', 'group'], ['(?<name>…)', 'named group'], ['(?:…)', 'non-capturing'], ['a|b', 'either'], ['* + ?', '0+, 1+, 0-1'], ['{2,5}', 'count'], ['(?=…)', 'lookahead'], ['\\b', 'word boundary']];
     clear(root, field('Pattern', pattern), options(...flagBoxes.map(([, c]) => c.root)), stat.root, split(src.root, h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, 'Matches')), highlight)), groups, field('Replace with', replace), replaced.root,
       card('Cheat sheet', h('div', { class: 'cheats' }, cheats.map(([t, d]) => h('span', {}, h('code', {}, t), ` ${d}`)))));
-    return live(root, () => {
-      clear(groups); clear(highlight);
-      replaced.value = '';
-      if (!pattern.value) { highlight.textContent = src.value; return; }
-      const flags = flagBoxes.filter(([, c]) => c.checked).map(([f]) => f).join('');
-      const re = new RegExp(pattern.value, flags);
+    return live(root, async () => {
       const text = src.value;
-      const matches = [];
-      if (re.global || re.sticky) {
-        for (const m of text.matchAll(re.global ? re : new RegExp(re.source, `${flags}g`))) { matches.push(m); if (matches.length > 5000) break; }
-      } else { const m = re.exec(text); if (m) matches.push(m); }
+      if (!pattern.value) { clear(groups); clear(highlight, text); replaced.value = ''; return; }
+      const flags = flagBoxes.filter(([, c]) => c.checked).map(([f]) => f).join('');
+      new RegExp(pattern.value, flags); // syntax errors show right away
+      const { matches, replacedText } = await runRegex(pattern.value, flags, text, replace.value);
+      clear(groups); clear(highlight);
+      replaced.value = replacedText ?? '';
       let last = 0;
       for (const m of matches) {
         highlight.append(text.slice(last, m.index), h('mark', { title: `Match at ${m.index}` }, m[0] || '∅'));
@@ -162,13 +215,12 @@ const regex = {
       highlight.append(text.slice(last));
       stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}`);
       if (matches.length) {
-        const names = matches[0].groups ? Object.keys(matches[0].groups) : [];
+        const names = matches[0].names;
         const cols = matches[0].length - 1;
         groups.append(card('Groups', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
           h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Index'), h('th', {}, 'Match'), Array.from({ length: cols }, (_, i) => h('th', {}, names[i] ? `${i + 1} ‹${names[i]}›` : `${i + 1}`)))),
           h('tbody', {}, matches.slice(0, 200).map((m, n) => h('tr', {}, h('td', {}, n + 1), h('td', {}, m.index), h('td', { class: 'mono' }, m[0]), Array.from({ length: cols }, (_, i) => h('td', { class: 'mono' }, m[i + 1] ?? '—')))))))));
       }
-      if (replace.value) replaced.value = text.replace(re, replace.value);
     }, stat);
   },
 };

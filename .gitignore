@@ -1,7 +1,3 @@
-bin/
-obj/
 dist/
-*.user
-.vs/
 node_modules/
-TestResults/
+*.log

@@ -16,61 +16,84 @@ const DOCUMENT_APIS = [
   ['xmlSchemas', 'XML schema'], ['jsonStructures', 'JSON structure'], ['workflows', 'Workflow'],
 ];
 
-let cache = null;
+const cache = new Map();
 
 /**
  * Reads the app's modules, domain models, enumerations and document names through the
- * Studio Pro model API. Outside Studio Pro it returns a sample app.
+ * Studio Pro model API (read-only). Marketplace modules are only loaded when asked for, because
+ * loading units is expensive. Outside Studio Pro it returns a sample app.
  */
-function loadApp(ctx, { refresh = false } = {}) {
-  if (cache && !refresh) return cache;
-  cache = (async () => {
+function loadApp(ctx, { refresh = false, marketplace: withMarketplace = false } = {}) {
+  const key = withMarketplace ? 'all' : 'own';
+  if (cache.has(key) && !refresh) return cache.get(key);
+  const promise = (async () => {
     const sp = ctx?.studioPro;
     if (!sp) {
       const modules = [{ name: 'Sales', marketplace: false }, { name: 'Administration', marketplace: false }];
-      return { connected: false, modules, model: normalizeModel(SAMPLE_UNITS, SAMPLE_ENUMERATIONS), documents: SAMPLE_DOCUMENTS };
+      return { connected: false, modules, model: normalizeModel(SAMPLE_UNITS, SAMPLE_ENUMERATIONS), documents: SAMPLE_DOCUMENTS, unavailable: [] };
     }
     const m = sp.app.model;
     const mods = await m.modules.getModules();
     const marketplace = new Set(mods.filter((x) => x.fromAppStore).map((x) => x.name));
     const modules = mods.map((x) => ({ name: x.name, marketplace: x.fromAppStore })).filter((x) => x.name !== 'System').sort((a, b) => a.name.localeCompare(b.name));
+    const wanted = (moduleName) => moduleName && moduleName !== 'System' && (withMarketplace || !marketplace.has(moduleName));
 
-    const loadUnits = async (api) => {
-      const infos = (await api.getUnitsInfo()).filter((i) => i.moduleName !== 'System');
+    const loadUnits = async (api, type) => {
+      const infos = (await api.getUnitsInfo()).filter((i) => wanted(i.moduleName));
       if (!infos.length) return [];
-      const ids = new Set(infos.map((i) => i.$ID));
-      const units = await api.loadAll((u) => ids.has(u.$ID), infos.length);
+      const ids = infos.map((i) => i.$ID);
+      // Newer API versions document loadUnits(type, ids); this one has loadAll(filter, max).
+      const units = typeof api.loadUnits === 'function' ? await api.loadUnits(type, ids) : await api.loadAll((u) => ids.includes(u.$ID), ids.length);
       const moduleOf = new Map(infos.map((i) => [i.$ID, i.moduleName]));
       return units.map((u, k) => ({ unit: u, moduleName: moduleOf.get(u.$ID) ?? infos[k]?.moduleName ?? '' }));
     };
-    const [domainModels, enumerations] = await Promise.all([loadUnits(m.domainModels), loadUnits(m.enumerations).catch(() => [])]);
+    const unavailable = [];
+    const [domainModels, enumerations] = await Promise.all([
+      loadUnits(m.domainModels, 'DomainModels$DomainModel'),
+      loadUnits(m.enumerations, 'Enumerations$Enumeration').catch(() => { unavailable.push('Enumeration'); return []; }),
+    ]);
     const model = normalizeModel(
       domainModels.map(({ unit, moduleName }) => ({ moduleName, domainModel: unit, marketplace: marketplace.has(moduleName) })),
       enumerations.map(({ unit, moduleName }) => ({ moduleName, name: unit.name, values: (unit.values ?? []).map((v) => v.name), marketplace: marketplace.has(moduleName) })),
     );
     const documents = [];
-    await Promise.all(DOCUMENT_APIS.map(async ([key, kind]) => {
+    await Promise.all(DOCUMENT_APIS.map(async ([api, kind]) => {
       try {
-        for (const i of await m[key].getUnitsInfo()) if (i.moduleName && i.moduleName !== 'System' && i.name) documents.push({ module: i.moduleName, kind, name: i.name, marketplace: marketplace.has(i.moduleName) });
-      } catch { /* API not available in this Studio Pro version */ }
+        for (const i of await m[api].getUnitsInfo()) if (wanted(i.moduleName) && i.name) documents.push({ module: i.moduleName, kind, name: i.name, marketplace: marketplace.has(i.moduleName) });
+      } catch {
+        unavailable.push(kind); // not in this Studio Pro version's API
+      }
     }));
-    return { connected: true, modules, model, documents };
+    return { connected: true, modules, model, documents, unavailable: [...new Set(unavailable)].sort() };
   })();
-  cache.catch(() => { cache = null; });
-  return cache;
+  cache.set(key, promise);
+  promise.catch(() => cache.delete(key));
+  return promise;
 }
 
-/** "Connected to Studio Pro" or "sample model" line with a refresh button. */
-function sourceBar(ctx, onLoad) {
+/**
+ * "Your app" or "sample model" line with a refresh button. Each time a tool opens it reads the
+ * model again, so edits made in Studio Pro since the last visit show up.
+ * @param {{ marketplace?: () => boolean }} [options]
+ */
+function sourceBar(ctx, onLoad, { marketplace = () => false } = {}) {
   const text = h('span', { class: 'hint' }, 'Loading the app model…');
-  const reload = (refresh) => loadApp(ctx, { refresh }).then((app) => {
-    text.textContent = app.connected
-      ? `Your app: ${app.model.entities.length} entities in ${app.modules.length} modules.`
-      : 'Sample model. Open the toolbox from Studio Pro (Extensions > Developer Toolbox) to use your app.';
-    onLoad(app);
-  }, (e) => { text.textContent = `Could not read the app model: ${e.message ?? e}`; });
-  reload(false);
-  return h('div', { class: 'source-bar' }, text, ctx?.studioPro && button('Refresh', () => reload(true), { kind: 'ghost', iconName: 'refresh' }));
+  let latest = 0;
+  const reload = (refresh) => {
+    const mine = ++latest;
+    text.textContent = 'Loading the app model…';
+    return loadApp(ctx, { refresh, marketplace: marketplace() }).then((app) => {
+      if (mine !== latest) return;
+      text.textContent = app.connected
+        ? `Your app: ${app.model.entities.length} entities in ${new Set(app.model.entities.map((e) => e.module)).size} modules${marketplace() ? ', Marketplace modules included' : ''}.`
+        : 'Sample model. Open the toolbox from Studio Pro (Extensions > Developer Toolbox) to use your app.';
+      onLoad(app);
+    }, (e) => { if (mine === latest) text.textContent = `Could not read the app model: ${e.message ?? e}`; });
+  };
+  // After the tool's saved options (like "Marketplace modules") are restored.
+  queueMicrotask(() => reload(true));
+  const root = h('div', { class: 'source-bar' }, text, ctx?.studioPro && button('Refresh', () => reload(true), { kind: 'ghost', iconName: 'refresh' }));
+  return Object.assign(root, { reload });
 }
 
 const issueList = (issues, where) => h('ul', { class: 'issues' }, issues.map((i) => h('li', { class: `sev-${i.severity}` }, h('span', { class: 'sev' }, i.severity), where ? h('span', { class: 'hint mono' }, where(i)) : null, h('span', {}, i.message))));
@@ -312,8 +335,9 @@ const domainDocs = {
         button('None', () => { mods.boxes.forEach((b) => { b.el.checked = false; }); run(); }, { kind: 'chip' })));
       run();
     };
-    market.el.addEventListener('change', () => app && renderModules());
-    clear(root, sourceBar(ctx, (a) => { app = a; renderModules(); }), options(field('Format', format), showAttrs.root, market.root), modsBox, stat.root, out.root);
+    const bar = sourceBar(ctx, (a) => { app = a; renderModules(); }, { marketplace: () => market.checked });
+    market.el.addEventListener('change', () => bar.reload(false));
+    clear(root, bar, options(field('Format', format), showAttrs.root, market.root), modsBox, stat.root, out.root);
     root.addEventListener('change', (e) => { if (e.target !== market.el) run(); });
   },
 };
@@ -345,8 +369,9 @@ const naming = {
         .filter((i) => hints.checked || i.severity !== 'hint');
       const count = (s) => issues.filter((i) => i.severity === s).length;
       const checked = app.documents.filter((d) => allowed(d.module)).length + model.entities.length + model.associations.length;
-      if (!issues.length) stat.ok(`Checked ${checked} names: all follow the conventions.`);
-      else stat.info(`Checked ${checked} names: ${count('error')} errors, ${count('warning')} warnings${hints.checked ? `, ${count('hint')} hints` : ''}.`);
+      const skipped = app.unavailable.length ? ` Not checked, because this Studio Pro version can't list them: ${app.unavailable.join(', ')}.` : '';
+      if (!issues.length && !skipped) stat.ok(`Checked ${checked} names: all follow the conventions.`);
+      else stat.info(`Checked ${checked} names: ${count('error')} errors, ${count('warning')} warnings${hints.checked ? `, ${count('hint')} hints` : ''}.${skipped}`);
       clear(table, issues.length ? h('table', { class: 'grid' },
         h('thead', {}, h('tr', {}, ['', 'Module', 'Kind', 'Name', 'Problem', 'Suggestion'].map((t) => h('th', {}, t)))),
         h('tbody', {}, issues.map((i) => h('tr', { class: `sev-${i.severity}` }, h('td', {}, h('span', { class: 'sev' }, i.severity)), h('td', {}, i.module), h('td', {}, i.kind), h('td', { class: 'mono' }, i.name), h('td', {}, i.message), h('td', { class: 'mono' }, i.suggestion ?? ''))))) : null);
@@ -356,9 +381,10 @@ const naming = {
       clear(moduleSel, h('option', { value: '' }, 'All modules'), app.modules.filter((m) => market.checked || !m.marketplace).map((m) => h('option', { value: m.name }, m.name)));
       moduleSel.value = [...moduleSel.options].some((o) => o.value === current) ? current : '';
     };
-    market.el.addEventListener('change', () => { if (app) fillModules(); });
+    const bar = sourceBar(ctx, (a) => { app = a; fillModules(); run(); }, { marketplace: () => market.checked });
+    market.el.addEventListener('change', () => bar.reload(false));
     clear(root,
-      sourceBar(ctx, (a) => { app = a; fillModules(); run(); }),
+      bar,
       options(field('Module', moduleSel), market.root, hints.root, button('Copy as CSV', () => copyText(asText(',')), { kind: 'ghost', iconName: 'copy' }), button('Copy as Markdown', () => copyText(asText('md')), { kind: 'ghost', iconName: 'copy' })),
       stat.root, table,
       h('details', { class: 'card' }, h('summary', {}, 'Rules'), h('p', { class: 'hint' }, 'Based on Mendix "Best practices for naming conventions" for Studio Pro 11. Entity, attribute, association and module checks are built in.'), rules.root));

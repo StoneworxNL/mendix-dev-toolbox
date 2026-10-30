@@ -1,25 +1,28 @@
 // Mendix XPath constraints: token reference, date token arithmetic and a syntax check.
 // See https://docs.mendix.com/refguide/xpath-keywords-and-system-variables/
 
-/** Date tokens with how to compute them. `firstDay` is the first day of the week (0 = Sunday). */
+/**
+ * Date tokens with how to compute them, given `now`, the options and a calendar `c` that reads and
+ * builds dates in either local time or UTC. `firstDay` is the first day of the week (0 = Sunday).
+ */
 const DATE_TOKENS = {
   CurrentDateTime: (d) => d,
-  BeginOfCurrentMinute: (d) => startOf(d, 'minute'),
-  EndOfCurrentMinute: (d) => endOf(d, 'minute'),
-  BeginOfCurrentHour: (d) => startOf(d, 'hour'),
-  EndOfCurrentHour: (d) => endOf(d, 'hour'),
-  BeginOfCurrentDay: (d) => startOf(d, 'day'),
-  EndOfCurrentDay: (d) => endOf(d, 'day'),
-  BeginOfYesterday: (d) => startOf(addDays(d, -1), 'day'),
-  EndOfYesterday: (d) => endOf(addDays(d, -1), 'day'),
-  BeginOfTomorrow: (d) => startOf(addDays(d, 1), 'day'),
-  EndOfTomorrow: (d) => endOf(addDays(d, 1), 'day'),
-  BeginOfCurrentWeek: (d, o) => startOf(addDays(d, -((d.getDay() - o.firstDay + 7) % 7)), 'day'),
-  EndOfCurrentWeek: (d, o) => endOf(addDays(d, 6 - ((d.getDay() - o.firstDay + 7) % 7)), 'day'),
-  BeginOfCurrentMonth: (d) => new Date(d.getFullYear(), d.getMonth(), 1),
-  EndOfCurrentMonth: (d) => new Date(new Date(d.getFullYear(), d.getMonth() + 1, 1) - 1),
-  BeginOfCurrentYear: (d) => new Date(d.getFullYear(), 0, 1),
-  EndOfCurrentYear: (d) => new Date(new Date(d.getFullYear() + 1, 0, 1) - 1),
+  BeginOfCurrentMinute: (d, o, c) => c.begin(d, 'minute'),
+  EndOfCurrentMinute: (d, o, c) => c.end(d, 'minute'),
+  BeginOfCurrentHour: (d, o, c) => c.begin(d, 'hour'),
+  EndOfCurrentHour: (d, o, c) => c.end(d, 'hour'),
+  BeginOfCurrentDay: (d, o, c) => c.begin(d, 'day'),
+  EndOfCurrentDay: (d, o, c) => c.end(d, 'day'),
+  BeginOfYesterday: (d, o, c) => c.begin(c.addDays(d, -1), 'day'),
+  EndOfYesterday: (d, o, c) => c.end(c.addDays(d, -1), 'day'),
+  BeginOfTomorrow: (d, o, c) => c.begin(c.addDays(d, 1), 'day'),
+  EndOfTomorrow: (d, o, c) => c.end(c.addDays(d, 1), 'day'),
+  BeginOfCurrentWeek: (d, o, c) => c.begin(c.addDays(d, -((c.get(d).day - o.firstDay + 7) % 7)), 'day'),
+  EndOfCurrentWeek: (d, o, c) => c.end(c.addDays(d, 6 - ((c.get(d).day - o.firstDay + 7) % 7)), 'day'),
+  BeginOfCurrentMonth: (d, o, c) => c.begin(d, 'month'),
+  EndOfCurrentMonth: (d, o, c) => c.end(d, 'month'),
+  BeginOfCurrentYear: (d, o, c) => c.begin(d, 'year'),
+  EndOfCurrentYear: (d, o, c) => c.end(d, 'year'),
 };
 
 const PERIODS = { MillisecondLength: 'ms', SecondLength: 's', MinuteLength: 'min', HourLength: 'h', DayLength: 'd', WeekLength: 'w', MonthLength: 'mo', YearLength: 'y' };
@@ -50,44 +53,47 @@ const KNOWN_FUNCTIONS = new Set(['contains', 'starts-with', 'ends-with', 'not', 
   ...['year', 'month', 'day', 'hours', 'minutes', 'seconds', 'quarter', 'day-of-year', 'week', 'weekday'].map((p) => `${p}-from-dateTime`),
   'avg', 'count', 'max', 'min', 'sum']);
 
-function startOf(d, unit) {
-  const x = new Date(d);
-  if (unit === 'day') x.setHours(0, 0, 0, 0);
-  if (unit === 'hour') x.setMinutes(0, 0, 0);
-  if (unit === 'minute') x.setSeconds(0, 0);
-  return x;
-}
-function endOf(d, unit) {
-  const x = startOf(d, unit);
-  const ms = { day: 864e5, hour: 36e5, minute: 6e4 }[unit];
-  return new Date(x.getTime() + ms - 1);
-}
-function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-
-function addPeriod(d, unit, n) {
-  const x = new Date(d);
-  if (unit === 'mo') x.setMonth(x.getMonth() + n);
-  else if (unit === 'y') x.setFullYear(x.getFullYear() + n);
-  else x.setTime(x.getTime() + n * { ms: 1, s: 1e3, min: 6e4, h: 36e5, d: 864e5, w: 6048e5 }[unit]);
-  return x;
-}
-
-function toUtcView(fn) {
-  // UTC variants: compute in UTC by shifting the clock so local getters read UTC fields.
-  return (d, o) => {
-    const shift = d.getTimezoneOffset() * 6e4;
-    const r = fn(new Date(d.getTime() + shift), o);
-    return new Date(r.getTime() - shift);
+/**
+ * Calendar arithmetic in local time or UTC. Everything goes through date fields, so a UTC token
+ * never depends on the local offset (which differs across a daylight saving change).
+ */
+function calendar(utc) {
+  const get = (d) => (utc
+    ? { y: d.getUTCFullYear(), M: d.getUTCMonth(), d: d.getUTCDate(), h: d.getUTCHours(), m: d.getUTCMinutes(), day: d.getUTCDay() }
+    : { y: d.getFullYear(), M: d.getMonth(), d: d.getDate(), h: d.getHours(), m: d.getMinutes(), day: d.getDay() });
+  const make = (y, M, d = 1, h = 0, m = 0) => (utc ? new Date(Date.UTC(y, M, d, h, m)) : new Date(y, M, d, h, m));
+  const begin = (date, unit) => {
+    const f = get(date);
+    return { year: () => make(f.y, 0), month: () => make(f.y, f.M), day: () => make(f.y, f.M, f.d), hour: () => make(f.y, f.M, f.d, f.h), minute: () => make(f.y, f.M, f.d, f.h, f.m) }[unit]();
   };
+  // The end of a period is one millisecond before the next one begins.
+  const end = (date, unit) => {
+    const f = get(date);
+    const next = { year: () => make(f.y + 1, 0), month: () => make(f.y, f.M + 1), day: () => make(f.y, f.M, f.d + 1), hour: () => new Date(begin(date, 'hour').getTime() + 36e5), minute: () => new Date(begin(date, 'minute').getTime() + 6e4) }[unit]();
+    return new Date(next.getTime() - 1);
+  };
+  const addDays = (date, n) => { const x = new Date(date); if (utc) x.setUTCDate(x.getUTCDate() + n); else x.setDate(x.getDate() + n); return x; };
+  const addMonths = (date, n) => { const x = new Date(date); if (utc) x.setUTCMonth(x.getUTCMonth() + n); else x.setMonth(x.getMonth() + n); return x; };
+  return { get, begin, end, addDays, addMonths };
 }
+
+// Days, weeks, months and years are calendar steps in the token's time zone; shorter periods are fixed lengths.
+function addPeriod(d, unit, n, c) {
+  if (unit === 'd') return c.addDays(d, n);
+  if (unit === 'w') return c.addDays(d, 7 * n);
+  if (unit === 'mo') return c.addMonths(d, n);
+  if (unit === 'y') return c.addMonths(d, 12 * n);
+  return new Date(d.getTime() + n * { ms: 1, s: 1e3, min: 6e4, h: 36e5 }[unit]);
+}
+
+const isUtcToken = (name) => name.endsWith('UTC') && DATE_TOKENS[name.slice(0, -3)] !== undefined;
 
 /** Resolves a single date token name (without [% %]) to a Date, or null when it is not a date token. */
 export function resolveDateToken(name, { now = new Date(), firstDay = 1 } = {}) {
-  const utc = name.endsWith('UTC') && name !== 'CurrentDateTime';
-  const base = utc ? name.slice(0, -3) : name;
-  const fn = DATE_TOKENS[base];
+  const utc = isUtcToken(name);
+  const fn = DATE_TOKENS[utc ? name.slice(0, -3) : name];
   if (!fn) return null;
-  return (utc ? toUtcView(fn) : fn)(now, { firstDay });
+  return fn(now, { firstDay }, calendar(utc));
 }
 
 /**
@@ -108,7 +114,7 @@ export function evaluateDateExpression(expr, options = {}) {
     const unit = PERIODS[t[3]];
     if (!unit) throw new Error(`[%${t[3]}%] is not a period; use one of ${Object.keys(PERIODS).map((k) => `[%${k}%]`).join(', ')}`);
     const n = Number(t[2] ?? t[4] ?? 1) * (t[1] === '-' ? -1 : 1);
-    date = addPeriod(date, unit, n);
+    date = addPeriod(date, unit, n, calendar(isUtcToken(m[1])));
     rest = rest.slice(t[0].length);
   }
   return date;

@@ -1,6 +1,6 @@
 # Developer Toolbox for Mendix Studio Pro
 
-A Studio Pro web extension with 36 developer utilities: Mendix-specific helpers plus the DevToys set,, available as a tab or a docked pane. Everything runs locally inside Studio Pro, so pasted tokens, certificates and data never leave your machine.
+A Studio Pro web extension with 36 developer utilities: Mendix-specific helpers plus the DevToys set, available as a tab or a docked pane. Everything runs locally inside Studio Pro: pasted tokens, certificates and data are never sent anywhere (the Markdown preview loads remote images only when you switch that on). Text typed into the encoders, the JWT tool and the hash tool is not saved between sessions.
 
 | Category | Tools |
 | --- | --- |
@@ -32,6 +32,10 @@ Built on the [Web Extensibility API](https://docs.mendix.com/apidocs-mxsdk/apido
    & "C:\Program Files\Mendix\11.12.6\modeler\studiopro.exe" "C:\Users\me\Mendix\MyApp\MyApp.mpr" --enable-extension-development --enable-web-extensions
    ```
 3. Choose **Extensions → Developer Toolbox → Open in a tab** (or **Open as a docked pane**).
+
+### Distribution
+
+For now the toolbox is used in-house: each developer builds it (or takes the `devtoolbox` artifact from a CI run) and copies it into an app's `extensions` folder, with extension development turned on as above. It is not published on the Mendix Marketplace. The `@mendix/extensions-api` version is pinned exactly, because the API still changes between Studio Pro releases; check the model access calls in `src/toolbox/tools/mendix.js` when you upgrade it.
 
 ## Develop
 
