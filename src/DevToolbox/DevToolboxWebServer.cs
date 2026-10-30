@@ -23,6 +23,11 @@ public static class RequestHandler
 {
     private const int MaxBodyBytes = 10 * 1024 * 1024;
     private static readonly Assembly Assembly = typeof(RequestHandler).Assembly;
+
+    // MSBuild's RecursiveDir uses the build machine's separator, so a Windows build embeds "wwwroot/js\app.js".
+    // Index the resources by a forward-slash name so lookups work wherever the DLL was built.
+    private static readonly Dictionary<string, string> Resources = Assembly.GetManifestResourceNames()
+        .ToDictionary(name => name.Replace('\\', '/'), StringComparer.Ordinal);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public static async Task HandleAsync(HttpListenerRequest request, HttpListenerResponse response, CancellationToken cancellationToken)
@@ -58,7 +63,7 @@ public static class RequestHandler
     private static async Task ServeFileAsync(string file, HttpListenerResponse response, CancellationToken cancellationToken)
     {
         // Resource names are fixed at build time, so a path like ../ simply finds nothing.
-        await using var stream = Assembly.GetManifestResourceStream($"wwwroot/{file}");
+        await using var stream = Resources.TryGetValue($"wwwroot/{file}", out var resource) ? Assembly.GetManifestResourceStream(resource) : null;
         if (stream is null)
         {
             response.StatusCode = (int)HttpStatusCode.NotFound;

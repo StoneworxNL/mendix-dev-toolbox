@@ -57,7 +57,8 @@ public sealed class RequestHandlerTests : IDisposable
     public async Task ReturnsNotFoundOutsideTheBundle()
     {
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("nope.js")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("..%2F..%2Fmanifest.json")).StatusCode);
+        // Windows' HTTP.sys refuses this with 403 before the handler runs; elsewhere the handler answers 404.
+        Assert.Contains((await client.GetAsync("..%2F..%2Fmanifest.json")).StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.Forbidden });
     }
 
     [Fact]
