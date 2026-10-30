@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Browser smoke test
+        run: |
+          npm i --no-save playwright@1.56.1 wait-on@8.0.3
+          npx playwright install --with-deps chromium
+          node build.mjs --serve &
+          npx wait-on -t 60000 http://localhost:5299/
+          node tests/ui/smoke.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devtoolbox
+          path: dist/devtoolbox
