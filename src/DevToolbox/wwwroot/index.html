@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Developer Toolbox</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23264ae5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.5-.5-2.4z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/js-yaml.min.js"></script>
+  <script src="vendor/sql-formatter.min.js"></script>
+  <script src="vendor/marked.umd.js"></script>
+  <script src="vendor/purify.min.js"></script>
+  <script src="vendor/diff.min.js"></script>
+  <script src="vendor/jsonpath-plus.min.js"></script>
+  <script src="vendor/qrcode.js"></script>
+  <script src="vendor/cronstrue.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <div id="shell" class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.5-.5-2.4z"/></svg>
+        <span>Developer Toolbox</span>
+        <button id="theme" type="button" class="icon-btn" title="Theme"></button>
+      </div>
+      <label class="search">
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg>
+        <input id="search" type="search" placeholder="Search tools  (Ctrl+K)" autocomplete="off" aria-label="Search tools">
+      </label>
+      <nav id="nav" aria-label="Tools"></nav>
+    </aside>
+    <div id="scrim" class="scrim"></div>
+    <div class="content">
+      <div class="topbar">
+        <button id="menu" type="button" class="icon-btn" aria-label="Show tools"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <span>Developer Toolbox</span>
+      </div>
+      <main id="main"></main>
+    </div>
+  </div>
+</body>
+</html>
