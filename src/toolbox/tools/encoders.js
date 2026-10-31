@@ -9,6 +9,7 @@ const direction = (persist = 'dir') => select({ encode: 'Encode', decode: 'Decod
 
 const base64Text = {
   id: 'base64', name: 'Base64 text', category: C, icon: 'binary',
+  sensitive: true,
   description: 'Encode text to Base64 or Base64URL and back, as UTF-8.',
   keywords: 'b64 base64url atob btoa',
   render(root) {
@@ -35,6 +36,7 @@ const MIME_SIGNATURES = [['89504e47', 'image/png'], ['ffd8ff', 'image/jpeg'], ['
 
 const base64Image = {
   id: 'base64-image', name: 'Base64 image', category: C, icon: 'image',
+  sensitive: true,
   description: 'Turn an image into a data URI or Base64, or preview and save Base64 image data.',
   keywords: 'data uri datauri picture png jpeg svg embed',
   render(root) {
@@ -69,6 +71,7 @@ const base64Image = {
 
 const url = {
   id: 'url', name: 'URL encode & parse', category: C, icon: 'link',
+  sensitive: true,
   description: 'Percent-encode or decode text, and break a URL into its parts and query parameters.',
   keywords: 'percent encode uri query string querystring parameters',
   render(root) {
@@ -112,6 +115,7 @@ const fmtClaim = (k, v) => (['exp', 'nbf', 'iat', 'auth_time'].includes(k) && ty
 
 const jwt = {
   id: 'jwt', name: 'JWT', category: C, icon: 'key',
+  sensitive: true,
   description: 'Decode a JSON Web Token, check its signature and expiry, or sign a new HMAC token.',
   keywords: 'json web token bearer oauth oidc jws claims',
   render(root) {
@@ -159,6 +163,7 @@ async function pipe(bytes, stream) {
 
 const gzip = {
   id: 'gzip', name: 'GZip / Deflate', category: C, icon: 'archive',
+  sensitive: true,
   description: 'Compress text to Base64 GZip, Deflate or raw Deflate, and decompress it again.',
   keywords: 'compress decompress zlib deflate inflate',
   render(root) {

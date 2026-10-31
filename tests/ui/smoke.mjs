@@ -10,6 +10,11 @@ const base = process.argv[2] ?? 'http://localhost:5299/';
 const shots = process.argv[3];
 
 const SAMPLES = {
+  oql: [null, /SELECT\n  c\.Name,\n  COUNT\(o\.ID\) AS Orders/, 'No problems found'],
+  'mx-xpath': [null, null, 'Date values right now'],
+  'mx-date-pattern': [null, null, 'formatDateTimeUTC'],
+  'mx-domain-docs': [null, /# Domain model\n\n## Administration/],
+  'mx-naming': [null, null, 'IVK_ is no longer recommended'],
   'json-yaml': ['{"name":"Mendix","tags":["low-code","studio"],"nested":{"a":1}}', /name: Mendix/],
   'json-table': ['[{"id":1,"name":"Ada"},{"id":2,"name":"Linus"}]', /id,name\n1,Ada/],
   'number-base': ['255', null, 'FF'],

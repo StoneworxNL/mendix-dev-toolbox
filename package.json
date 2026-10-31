@@ -1,10 +1,14 @@
 {
   "name": "devtoolbox",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "DevToys-style developer utilities as a Mendix Studio Pro web extension",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": "Stoneworx",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
@@ -17,7 +21,7 @@
     "cronstrue": "3.38.0",
     "diff": "9.0.0",
     "dompurify": "3.4.17",
-    "js-yaml": "4.1.0",
+    "js-yaml": "4.3.2",
     "jsonpath-plus": "11.2.2",
     "marked": "18.1.2",
     "qrcode-generator": "2.0.4",
