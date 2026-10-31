@@ -1,5 +1,7 @@
 # Developer Toolbox: code review (0.3.0, c300fbe)
 
+> **Status (31 October 2026):** C1, H1, H2, H3, M1, M5, M11 and M14 were fixed in `c76046d` and `620f106`. H4 is now explained in the tool but still unverified against a running app. The follow-up review of that code and the open items are in [`FUTURE-WORK.md`](FUTURE-WORK.md), which takes precedence over this file.
+
 Scope: every file under `src/`, `build.mjs`, `dev/`, `tests/`, CI, and the `@mendix/extensions-api` 0.11.6-mendix.11.12.6 type definitions. I checked the code against the Mendix docs as of 31 October 2026 (links at the end). Severity:
 
 - **Critical** blocks use or loses data.

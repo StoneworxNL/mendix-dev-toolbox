@@ -1,5 +1,7 @@
 # Developer Toolbox: roadmap
 
+> **Status (31 October 2026):** Phase 0 is done (PR #3). [`FUTURE-WORK.md`](FUTURE-WORK.md) re-plans the rest against Mendix's release calendar and takes precedence where they differ. In particular, "JSON → integration in one step" (Phase 2) is deprioritized, because Maia creates JSON structures and import/export mappings since 11.13 and 11.16. Maia tool registration also moves earlier.
+
 Where the toolbox can go after 0.3.0. The plan is based on the code review (`docs/REVIEW.md`), the Mendix docs as of 31 October 2026 and what the `@mendix/extensions-api` 11.12 type definitions actually expose.
 
 **Direction:** turn it from "DevToys inside Studio Pro" into "the Mendix developer's assistant inside Studio Pro". The generic tools stay. The growth is in tools that know the app model, react to what the developer is doing and write their results back into the app.
@@ -139,7 +141,7 @@ Constraints to design around:
 2. Live model cache (3.1), because everything in Phase 1 depends on it.
 3. Naming check 2.0 (3.2): the most visible value for teams.
 4. OQL and view entities (3.3), then XPath (3.4).
-5. JSON → integration (Phase 2), the biggest time saver.
+5. JSON → integration (Phase 2): deprioritized; Maia covers it (see FUTURE-WORK.md).
 6. Maia tools (Phase 3), once the deterministic functions are stable.
 
 ## 8. Open questions
