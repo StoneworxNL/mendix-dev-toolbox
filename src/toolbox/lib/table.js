@@ -1,16 +1,18 @@
-// JSON array <-> table (CSV/TSV/Markdown) conversion.
+// JSON array <-> table (CSV/TSV/Markdown) conversion. Integers beyond 2^53 (Mendix object IDs)
+// stay exact in both directions.
+import { parseJson, isRawNumber, exactInteger } from './json.js';
 
 export function flatten(obj, prefix = '', out = {}) {
   for (const [k, v] of Object.entries(obj ?? {})) {
     const key = prefix ? `${prefix}.${k}` : k;
-    if (v && typeof v === 'object' && !Array.isArray(v)) flatten(v, key, out);
+    if (v && typeof v === 'object' && !Array.isArray(v) && !isRawNumber(v)) flatten(v, key, out);
     else out[key] = Array.isArray(v) ? JSON.stringify(v) : v;
   }
   return out;
 }
 
 export function jsonToRows(json, { flattenNested = true } = {}) {
-  let data = typeof json === 'string' ? JSON.parse(json) : json;
+  let data = typeof json === 'string' ? parseJson(json) : json;
   if (!Array.isArray(data)) {
     const arr = data && typeof data === 'object' ? Object.values(data).find(Array.isArray) : null;
     if (!arr) throw new Error('Input must be a JSON array of objects (or an object holding one).');
@@ -22,7 +24,9 @@ export function jsonToRows(json, { flattenNested = true } = {}) {
   return { columns, rows };
 }
 
-const cell = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+/** A cell's text; raw numbers become their digits. */
+export const cellText = (v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+const cell = cellText;
 
 export function toDelimited({ columns, rows }, delimiter = ',') {
   const quote = (s) => (s.includes(delimiter) || /["\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
@@ -54,6 +58,7 @@ export function parseDelimited(text, delimiter = ',') {
   const [header = [], ...body] = rows.filter((r) => r.some((c) => c !== ''));
   return body.map((r) => Object.fromEntries(header.map((h, i) => {
     const v = r[i] ?? '';
+    if (/^-?\d+$/.test(v) && !/^-?0\d/.test(v)) return [h, exactInteger(v) ?? v]; // text when it cannot stay exact
     return [h, v !== '' && !isNaN(v) && !/^0\d/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v];
   })));
 }

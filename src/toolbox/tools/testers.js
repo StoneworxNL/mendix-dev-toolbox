@@ -1,7 +1,20 @@
 import { JSONPath } from 'jsonpath-plus';
 import { h, clear, textArea, select, input, field, options, split, status, live, card, kv, button } from '../ui.js';
+import { parseJson, isRawNumber, unsafeIntegers } from '../lib/json.js';
 
 const C = 'Testers';
+
+// JSONPath over JSON with integers beyond 2^53 (Mendix object IDs): they become BigInts while the
+// query runs, so filters compare them and wildcards treat them as values, and print as exact digits.
+const toBigInts = (v) => (isRawNumber(v) ? BigInt(v.rawJSON) : Array.isArray(v) ? v.map(toBigInts) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toBigInts(x)])) : v);
+const exactReplacer = (key, value) => (typeof value === 'bigint' ? JSON.rawJSON(String(value)) : value);
+
+/** Runs a JSONPath query on JSON text; values come back as JSON text with large integers exact. */
+export function queryJson(text, path, resultType = 'value') {
+  const json = toBigInts(parseJson(text));
+  const result = JSONPath({ path, json, resultType, eval: 'safe' });
+  return { count: result.length, text: resultType === 'value' ? JSON.stringify(result, exactReplacer, 2) : result.join('\n') };
+}
 
 const jsonPath = {
   id: 'jsonpath', name: 'JSONPath tester', category: C, icon: 'path',
@@ -18,10 +31,10 @@ const jsonPath = {
     const run = live(root, () => {
       out.value = '';
       if (!expr.value.trim() || !src.value.trim()) return;
-      const json = JSON.parse(src.value);
-      const result = JSONPath({ path: expr.value, json, resultType: show.value, eval: 'safe' });
-      out.value = show.value === 'value' ? JSON.stringify(result, null, 2) : result.join('\n');
-      stat.info(`${result.length} result${result.length === 1 ? '' : 's'}`);
+      const { count, text } = queryJson(src.value, expr.value, show.value);
+      out.value = text;
+      const big = unsafeIntegers(src.value).length;
+      stat.info(`${count} result${count === 1 ? '' : 's'}${big ? `. ${big} integer${big === 1 ? '' : 's'} beyond 2^53 kept exactly.` : ''}`);
     }, stat);
     return run;
   },

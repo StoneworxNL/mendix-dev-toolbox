@@ -331,3 +331,34 @@ test('regex capture names follow group numbers', async () => {
   assert.deepEqual(captureNames(String.raw`(\d+)-(?<y>\d+)`), [null, 'y']);
   assert.deepEqual(captureNames(String.raw`(?:a)(?<x>b)(?=c)(?<!d)(e)\(f\)[(\]](?<z>g)`), ['x', null, 'z']);
 });
+
+const BIG = '281474976710657123';
+
+test('JSON <-> YAML keeps Mendix object IDs exact', async () => {
+  const { jsonToYaml, yamlToJson } = await import('../../src/toolbox/tools/converters.js');
+  assert.equal(jsonToYaml(`{"id": ${BIG}, "count": 2}`), `id: ${BIG}\ncount: 2\n`);
+  assert.equal(yamlToJson(`id: ${BIG}\ncount: 2\n`, { indent: 0 }), `{"id":${BIG},"count":2}`);
+  assert.equal(yamlToJson(`id: ${BIG}\ncount: 2\n`, { indent: 0, sort: true }), `{"count":2,"id":${BIG}}`);
+});
+
+test('JSON <-> CSV keeps Mendix object IDs exact', () => {
+  const rows = table.jsonToRows(`[{"id": ${BIG}, "name": "a", "nested": {"ref": ${BIG}}}]`);
+  assert.equal(table.toDelimited(rows), `id,name,nested.ref\n${BIG},a,${BIG}`);
+  assert.equal(JSON.stringify(table.parseDelimited(`id,n\n${BIG},7\n`)), `[{"id":${BIG},"n":7}]`);
+});
+
+test('JSONPath keeps Mendix object IDs exact', async () => {
+  const { queryJson } = await import('../../src/toolbox/tools/testers.js');
+  const json = `{"items": [{"id": ${BIG}}, {"id": 1}]}`;
+  assert.equal(queryJson(json, '$..id').text.replace(/\s/g, ''), `[${BIG},1]`);
+  assert.equal(queryJson(json, '$.items[?(@.id > 2)].id').text.replace(/\s/g, ''), `[${BIG}]`);
+  assert.equal(queryJson(json, '$..*').count, 5); // the array, two objects, two IDs: no extra node inside the big ID
+});
+
+test('JWT signing and decoding keep Mendix object IDs exact', async () => {
+  const json = await lib('json');
+  const token = await jwt.signJwt({ alg: 'HS256', typ: 'JWT' }, json.parseJson(`{"sub": ${BIG}}`), 'secret');
+  assert.match(enc.utf8Decode(enc.base64ToBytes(token.split('.')[1])), new RegExp(BIG));
+  assert.equal(JSON.stringify(jwt.decodeJwt(token).payload), `{"sub":${BIG}}`);
+  assert.ok(await jwt.verifyJwt(token, 'secret'));
+});

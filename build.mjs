@@ -6,9 +6,10 @@
 //   node build.mjs --sourcemap           include source maps (always on with --watch and --serve)
 // MENDIX_APP_DIR works as an alternative to --app.
 import * as esbuild from 'esbuild';
-import { cp, mkdir, rm, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, rm, copyFile, writeFile } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { bundledLicenses, thirdPartyNotice } from './licenses.mjs';
 
 const NAME = 'devtoolbox'; // folder name in <app>/extensions; must match the componentName in src/main
 const args = process.argv.slice(2);
@@ -32,6 +33,7 @@ const common = {
   logLevel: 'info',
   // Releases get one THIRD_PARTY_LICENSES.txt instead of a .LEGAL.txt per chunk.
   legalComments: dev ? 'linked' : 'none',
+  metafile: !dev,
   // Provided by Studio Pro at runtime.
   external: ['@mendix/component-framework', '@mendix/model-access-sdk', '@mendix/model-access-registry'],
   loader: { '.css': 'text' },
@@ -44,20 +46,6 @@ async function copyXmllint(dir) {
   for (const f of ['index-browser.mjs', 'xmllint-browser.mjs', 'xmllint.wasm', 'COPYING']) await copyFile(join(src, f), join(dir, 'xmllint', f));
 }
 
-// The license texts of the runtime dependencies, which are bundled into the chunks.
-async function writeThirdPartyLicenses(dir) {
-  const { dependencies } = JSON.parse(await readFile('package.json', 'utf8'));
-  const sections = [];
-  for (const name of Object.keys(dependencies).sort()) {
-    const pkgDir = join('node_modules', name);
-    const pkg = JSON.parse(await readFile(join(pkgDir, 'package.json'), 'utf8'));
-    const file = readdirSync(pkgDir).find((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f));
-    const text = file ? (await readFile(join(pkgDir, file), 'utf8')).trim() : `License: ${pkg.license ?? 'see the package'} (no license file in the package)`;
-    sections.push(`${name} ${pkg.version}\n${'='.repeat(`${name} ${pkg.version}`.length)}\n\n${text}`);
-  }
-  await writeFile(join(dir, 'THIRD_PARTY_LICENSES.txt'), `Third-party software bundled in the Developer Toolbox\n\n${sections.join('\n\n\n')}\n`);
-}
-
 const extensionFiles = {
   name: 'extension-files',
   setup(build) {
@@ -65,7 +53,16 @@ const extensionFiles = {
       if (result.errors.length) return;
       await copyFile('src/manifest.json', join(outDir, 'manifest.json'));
       await copyXmllint(outDir);
-      if (!dev) await writeThirdPartyLicenses(outDir);
+      // The licence notices of every bundled package, found through the metafile.
+      if (!dev) {
+        try {
+          await writeFile(join(outDir, 'THIRD_PARTY_LICENSES.txt'), thirdPartyNotice(bundledLicenses(result.metafile)));
+        } catch (e) {
+          console.error(`Release build stopped: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
       if (!appDir) return;
       if (!existsSync(appDir) || !readdirSync(appDir).some((f) => f.endsWith('.mpr'))) {
         console.error(`No Mendix app (.mpr) found in ${appDir}; not copying the extension.`);
