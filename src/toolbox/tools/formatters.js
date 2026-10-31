@@ -2,6 +2,7 @@ import { format as formatSql } from 'sql-formatter';
 import { clear, textArea, select, checkbox, field, options, split, status, live } from '../ui.js';
 import { formatXml, minifyXml } from '../lib/xml.js';
 import { sortDeep } from './converters.js';
+import { parseJson, unsafeIntegers, LOSSLESS } from '../lib/json.js';
 
 const C = 'Formatters';
 const INDENTS = { 2: '2 spaces', 4: '4 spaces', tab: 'Tab', min: 'Minified' };
@@ -31,12 +32,15 @@ const json = {
     return live(root, () => {
       if (!src.value.trim()) { out.value = ''; return; }
       let data;
-      try { data = JSON.parse(src.value); } catch (e) { out.value = ''; throw jsonError(e, src.value); }
+      try { data = parseJson(src.value); } catch (e) { out.value = ''; throw jsonError(e, src.value); }
       if (sortKeys.checked) data = sortDeep(data);
       let text = indent.value === 'min' ? JSON.stringify(data) : JSON.stringify(data, null, indentText(indent.value));
       if (escapeUnicode.checked) text = text.replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
       out.value = text;
-      stat.ok('Valid JSON');
+      const big = unsafeIntegers(src.value);
+      if (!big.length) stat.ok('Valid JSON');
+      else if (LOSSLESS) stat.ok(`Valid JSON. ${big.length} integer${big.length === 1 ? '' : 's'} beyond 2^53 (like Mendix object IDs) kept exactly.`);
+      else stat.info(`Valid JSON, but ${big.length} integer${big.length === 1 ? ' is' : 's are'} too large for JavaScript and rounded in the output, for example ${big[0]}.`);
     }, stat);
   },
 };

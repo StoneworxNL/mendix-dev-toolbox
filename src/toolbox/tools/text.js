@@ -4,6 +4,8 @@ import DOMPurify from 'dompurify';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, copyText } from '../ui.js';
 import { ESCAPE_MODES, escapeText, unescapeText } from '../lib/encoding.js';
 import { CASES, LINE_ACTIONS, analyze } from '../lib/textcase.js';
+import { parseJson } from '../lib/json.js';
+import { captureNames } from '../lib/regex.js';
 
 const C = 'Text';
 
@@ -64,7 +66,7 @@ const diff = {
       const opts = { ignoreCase: ignoreCase.checked, ignoreWhitespace: ignoreWs.checked };
       let parts;
       if (mode.value === 'json') {
-        const norm = (t) => JSON.stringify(JSON.parse(t), null, 2);
+        const norm = (t) => JSON.stringify(parseJson(t), null, 2); // keeps 64-bit IDs exact
         left = norm(left); right = norm(right);
         parts = Diff.diffLines(left, right, opts);
       } else if (mode.value === 'lines') parts = Diff.diffLines(left, right, { ...opts, newlineIsToken: false });
@@ -150,7 +152,7 @@ function matchRegex({ source, flags, text, replacement }) {
   if (re.global || re.sticky) {
     for (const m of text.matchAll(re.global ? re : new RegExp(source, `${flags}g`))) { found.push(m); if (found.length > 5000) break; }
   } else { const m = re.exec(text); if (m) found.push(m); }
-  const matches = found.map((m) => ({ items: [...m], index: m.index, names: m.groups ? Object.keys(m.groups) : [] }));
+  const matches = found.map((m) => ({ items: [...m], index: m.index }));
   return { matches, replacedText: replacement ? text.replace(new RegExp(source, flags), replacement) : '' };
 }
 
@@ -159,9 +161,13 @@ function matchRegex({ source, flags, text, replacement }) {
 const REGEX_TIMEOUT_MS = 1500;
 let regexWorker = null;
 let pending = null;
+// Set when the host refuses to start a worker; matching then runs inline.
+let workersBlocked = false;
+const answered = new WeakSet();
 function runRegex(source, flags, text, replacement) {
   const job = { source, flags, text, replacement };
   pending?.cancel(); // a newer input replaces the running one
+  if (workersBlocked) return Promise.resolve(unpack(matchRegex(job)));
   if (!regexWorker) {
     try {
       const url = URL.createObjectURL(new Blob([`const matchRegex = ${matchRegex.toString()};\nonmessage = ({ data }) => postMessage(matchRegex(data));`], { type: 'text/javascript' }));
@@ -175,12 +181,18 @@ function runRegex(source, flags, text, replacement) {
     const stop = () => { worker.terminate(); if (regexWorker === worker) regexWorker = null; };
     const timer = setTimeout(() => { stop(); pending = null; reject(new Error(`Stopped after ${REGEX_TIMEOUT_MS / 1000} s: the pattern takes too long on this text (catastrophic backtracking?)`)); }, REGEX_TIMEOUT_MS);
     pending = { cancel: () => { clearTimeout(timer); stop(); pending = null; } };
-    worker.onmessage = ({ data }) => { clearTimeout(timer); pending = null; resolve(unpack(data)); };
-    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); stop(); pending = null; reject(new Error(e.message)); };
+    worker.onmessage = ({ data }) => { answered.add(worker); clearTimeout(timer); pending = null; resolve(unpack(data)); };
+    worker.onerror = (e) => {
+      e.preventDefault(); clearTimeout(timer); stop(); pending = null;
+      // A worker that fails before its first answer could not start (for example a content
+      // security policy that blocks blob: scripts), so match inline from now on.
+      if (!answered.has(worker)) { workersBlocked = true; try { resolve(unpack(matchRegex(job))); } catch (err) { reject(err); } return; }
+      reject(new Error(e.message));
+    };
     worker.postMessage(job);
   });
 }
-const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index, names: m.names })), replacedText });
+const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index })), replacedText });
 
 const regex = {
   id: 'regex', name: 'Regex tester', category: C, icon: 'regex',
@@ -215,7 +227,7 @@ const regex = {
       highlight.append(text.slice(last));
       stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}`);
       if (matches.length) {
-        const names = matches[0].names;
+        const names = captureNames(pattern.value);
         const cols = matches[0].length - 1;
         groups.append(card('Groups', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
           h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Index'), h('th', {}, 'Match'), Array.from({ length: cols }, (_, i) => h('th', {}, names[i] ? `${i + 1} ‹${names[i]}›` : `${i + 1}`)))),

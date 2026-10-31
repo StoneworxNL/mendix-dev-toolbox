@@ -3,11 +3,13 @@
 //   node build.mjs --watch               rebuild on change
 //   node build.mjs --serve [port]        run the toolbox in a browser at http://localhost:5299/
 //   node build.mjs --app <app folder>    also copy the build into <app>/extensions/devtoolbox
+//   node build.mjs --sourcemap           include source maps (always on with --watch and --serve)
 // MENDIX_APP_DIR works as an alternative to --app.
 import * as esbuild from 'esbuild';
-import { cp, mkdir, rm, copyFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { cp, mkdir, rm, copyFile, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { bundledLicenses, thirdPartyNotice } from './licenses.mjs';
 
 const NAME = 'devtoolbox'; // folder name in <app>/extensions; must match the componentName in src/main
 const args = process.argv.slice(2);
@@ -16,6 +18,8 @@ const option = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 &&
 
 const appDir = option('app') ?? process.env.MENDIX_APP_DIR;
 const outDir = `dist/${NAME}`;
+// Source maps only for development: in a release they would more than double what ships in the app.
+const dev = flag('watch') || flag('serve') || flag('sourcemap');
 
 const common = {
   bundle: true,
@@ -25,9 +29,11 @@ const common = {
   splitting: true,
   treeShaking: true,
   minify: !flag('watch') && !flag('serve'),
-  sourcemap: 'linked',
+  sourcemap: dev ? 'linked' : false,
   logLevel: 'info',
-  legalComments: 'linked',
+  // Releases get one THIRD_PARTY_LICENSES.txt instead of a .LEGAL.txt per chunk.
+  legalComments: dev ? 'linked' : 'none',
+  metafile: !dev,
   // Provided by Studio Pro at runtime.
   external: ['@mendix/component-framework', '@mendix/model-access-sdk', '@mendix/model-access-registry'],
   loader: { '.css': 'text' },
@@ -47,8 +53,18 @@ const extensionFiles = {
       if (result.errors.length) return;
       await copyFile('src/manifest.json', join(outDir, 'manifest.json'));
       await copyXmllint(outDir);
+      // The licence notices of every bundled package, found through the metafile.
+      if (!dev) {
+        try {
+          await writeFile(join(outDir, 'THIRD_PARTY_LICENSES.txt'), thirdPartyNotice(bundledLicenses(result.metafile)));
+        } catch (e) {
+          console.error(`Release build stopped: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
       if (!appDir) return;
-      if (!existsSync(appDir) || !(await import('node:fs')).readdirSync(appDir).some((f) => f.endsWith('.mpr'))) {
+      if (!existsSync(appDir) || !readdirSync(appDir).some((f) => f.endsWith('.mpr'))) {
         console.error(`No Mendix app (.mpr) found in ${appDir}; not copying the extension.`);
         return;
       }

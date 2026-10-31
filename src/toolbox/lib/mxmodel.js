@@ -219,4 +219,5 @@ export const SAMPLE_DOCUMENTS = [
   ['Sales', 'Layout', 'Atlas_Default'], ['Sales', 'Layout', 'MainLayout'],
   ['Sales', 'Import mapping', 'IMM_Order'], ['Sales', 'Export mapping', 'OrderExport'], ['Sales', 'JSON structure', 'JSON_Order'],
   ['Administration', 'Page', 'Account_Overview'], ['Administration', 'Page', 'Home_Desktop_Default'], ['Administration', 'Microflow', 'ASU_Administration_Start'],
+  ['Sales', 'Workflow', 'OrderApproval'], ['Sales', 'Workflow', 'WF_Order_Approve'],
 ].map(([module, kind, name]) => ({ module, kind, name }));

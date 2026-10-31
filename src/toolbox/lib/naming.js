@@ -22,7 +22,10 @@ xml schema prefixes: XSD_
 json structure prefixes: JSON_
 `;
 
-const KINDS = ['microflow', 'nanoflow', 'page', 'layout', 'snippet', 'enumeration', 'import mapping', 'export mapping', 'xml schema', 'json structure'];
+const KINDS = ['microflow', 'nanoflow', 'page', 'layout', 'snippet', 'enumeration', 'import mapping', 'export mapping', 'xml schema', 'json structure', 'workflow'];
+
+/** Whether checkNaming looks at documents of this kind with these rules (workflows are always checked). */
+export const isChecked = (kind, rules) => kind.toLowerCase() === 'workflow' || Boolean(rules[kind.toLowerCase()]);
 
 /** Parses rule text into `{ [kind]: { prefixes?: string[], suffixes?: string[], names?: string[] }, deprecated: Map }`. */
 export function parseRules(text) {
@@ -65,6 +68,9 @@ export function checkNaming({ documents = [], model = null, modules = [] }, rule
 
   for (const d of documents) {
     const kind = d.kind.toLowerCase();
+    if (kind === 'workflow' && !pascal.test(d.name)) {
+      add(d.module, d.kind, d.name, 'warning', 'Workflow names are a noun and a verb in PascalCase, without a prefix, like EmployeeOnboarding', d.name.split('_').filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(''));
+    }
     const rule = rules[kind];
     if (!rule) continue;
     const prefix = /^([A-Za-z]+_)/.exec(d.name)?.[1];
