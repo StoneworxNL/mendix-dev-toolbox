@@ -285,3 +285,28 @@ test('naming check follows the Mendix conventions', () => {
   assert.equal(find('my_module')[0].severity, 'warning');
   assert.throws(() => naming.parseRules('widgets prefixes: W_'), /unknown kind/);
 });
+
+test('XPath check stops at an unclosed token and knows only documented periods', () => {
+  const { issues } = mxx.lintConstraint('[OrderDate > [%BeginOfCurrentDay]');
+  assert.match(issues.map((i) => i.message).join('\n'), /Unterminated \[% token/);
+  assert.ok(!mxx.PERIOD_NAMES.includes('MillisecondLength'));
+  assert.throws(() => mxx.evaluateDateExpression('[%CurrentDateTime%] + [%MillisecondLength%]'), /is not a period/);
+  assert.equal(mxx.lintConstraint('[Name = empty][Code != NULL]').issues.length, 0);
+  assert.match(mxx.lintConstraint('[Name = null]').issues[0].message, /empty or NULL/);
+});
+
+test('OQL accepts constants and enumeration values', () => {
+  assert.deepEqual(oql.lintOql('SELECT o.Total AS T FROM Sales.Product AS o WHERE o.Total > $Sales.MinOrder'), []);
+  assert.deepEqual(oql.lintOql('SELECT p.Name AS N FROM RealEstate.Property AS p WHERE p.Kind = RealEstate.PropertyTypes#Apartment'), []);
+  assert.match(oql.formatOql('select p.Name from M.P as p where p.Kind = M.Kinds#Big and p.Price > $M.Min'), /p\.Kind = M\.Kinds#Big\n  AND p\.Price > \$M\.Min/);
+  assert.equal(oql.FUNCTIONS.find((f) => f.name === 'LOCATE').syntax, 'LOCATE(expression, substring [, offset])');
+  assert.deepEqual(oql.FUNCTIONS.filter((f) => f.javaOnly).map((f) => f.name).sort(), ['DATEADD', 'DATEPARSE', 'DATETRUNC', 'LOCATE', 'SUBSTRING']);
+});
+
+test('naming check covers workflows', () => {
+  const issues = naming.checkNaming({ documents: mxm.SAMPLE_DOCUMENTS });
+  assert.equal(issues.filter((i) => i.name === 'OrderApproval').length, 0);
+  assert.equal(issues.find((i) => i.name === 'WF_Order_Approve').suggestion, 'WFOrderApprove');
+  assert.ok(naming.isChecked('Workflow', naming.parseRules('')));
+  assert.ok(!naming.isChecked('Page', naming.parseRules('')));
+});

@@ -159,9 +159,13 @@ function matchRegex({ source, flags, text, replacement }) {
 const REGEX_TIMEOUT_MS = 1500;
 let regexWorker = null;
 let pending = null;
+// Set when the host refuses to start a worker; matching then runs inline.
+let workersBlocked = false;
+const answered = new WeakSet();
 function runRegex(source, flags, text, replacement) {
   const job = { source, flags, text, replacement };
   pending?.cancel(); // a newer input replaces the running one
+  if (workersBlocked) return Promise.resolve(unpack(matchRegex(job)));
   if (!regexWorker) {
     try {
       const url = URL.createObjectURL(new Blob([`const matchRegex = ${matchRegex.toString()};\nonmessage = ({ data }) => postMessage(matchRegex(data));`], { type: 'text/javascript' }));
@@ -175,8 +179,14 @@ function runRegex(source, flags, text, replacement) {
     const stop = () => { worker.terminate(); if (regexWorker === worker) regexWorker = null; };
     const timer = setTimeout(() => { stop(); pending = null; reject(new Error(`Stopped after ${REGEX_TIMEOUT_MS / 1000} s: the pattern takes too long on this text (catastrophic backtracking?)`)); }, REGEX_TIMEOUT_MS);
     pending = { cancel: () => { clearTimeout(timer); stop(); pending = null; } };
-    worker.onmessage = ({ data }) => { clearTimeout(timer); pending = null; resolve(unpack(data)); };
-    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); stop(); pending = null; reject(new Error(e.message)); };
+    worker.onmessage = ({ data }) => { answered.add(worker); clearTimeout(timer); pending = null; resolve(unpack(data)); };
+    worker.onerror = (e) => {
+      e.preventDefault(); clearTimeout(timer); stop(); pending = null;
+      // A worker that fails before its first answer could not start (for example a content
+      // security policy that blocks blob: scripts), so match inline from now on.
+      if (!answered.has(worker)) { workersBlocked = true; try { resolve(unpack(matchRegex(job))); } catch (err) { reject(err); } return; }
+      reject(new Error(e.message));
+    };
     worker.postMessage(job);
   });
 }
