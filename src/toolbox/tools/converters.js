@@ -4,6 +4,7 @@ import { h, clear, textArea, select, checkbox, input, number, field, options, sp
 import { jsonToRows, toDelimited, toMarkdown, parseDelimited } from '../lib/table.js';
 import { BASES, parseBigInt, formatBigInt, twosComplement } from '../lib/numbers.js';
 import { nextOccurrences, parseCron } from '../lib/cron.js';
+import { isRawNumber } from '../lib/json.js';
 
 const C = 'Converters';
 
@@ -38,7 +39,7 @@ const jsonYaml = {
 
 export function sortDeep(v) {
   if (Array.isArray(v)) return v.map(sortDeep);
-  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortDeep(v[k])]));
+  if (v && typeof v === 'object' && !isRawNumber(v)) return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortDeep(v[k])]));
   return v;
 }
 

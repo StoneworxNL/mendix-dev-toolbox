@@ -310,3 +310,24 @@ test('naming check covers workflows', () => {
   assert.ok(naming.isChecked('Workflow', naming.parseRules('')));
   assert.ok(!naming.isChecked('Page', naming.parseRules('')));
 });
+
+test('cron accepts 7 as Sunday in ranges', () => {
+  assert.deepEqual([...cron.parseCron('0 0 * * 1-7').weekdays].sort(), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...cron.parseCron('0 0 * * 5-7').weekdays].sort(), [0, 5, 6]);
+  assert.deepEqual([...cron.parseCron('0 0 * * 7').weekdays], [0]);
+});
+
+test('JSON keeps integers beyond 2^53 exactly', async () => {
+  const json = await lib('json');
+  const text = '{"id": 281474976710657123, "small": 12, "price": 1.5, "label": "99999999999999999999"}';
+  assert.deepEqual(json.unsafeIntegers(text), ['281474976710657123']);
+  assert.equal(JSON.stringify(json.parseJson(text)), '{"id":281474976710657123,"small":12,"price":1.5,"label":"99999999999999999999"}');
+  const { sortDeep } = await import('../../src/toolbox/tools/converters.js');
+  assert.equal(JSON.stringify(sortDeep(json.parseJson('{"b":1,"a":281474976710657123}'))), '{"a":281474976710657123,"b":1}');
+});
+
+test('regex capture names follow group numbers', async () => {
+  const { captureNames } = await lib('regex');
+  assert.deepEqual(captureNames(String.raw`(\d+)-(?<y>\d+)`), [null, 'y']);
+  assert.deepEqual(captureNames(String.raw`(?:a)(?<x>b)(?=c)(?<!d)(e)\(f\)[(\]](?<z>g)`), ['x', null, 'z']);
+});

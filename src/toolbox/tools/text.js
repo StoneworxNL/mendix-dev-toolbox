@@ -4,6 +4,8 @@ import DOMPurify from 'dompurify';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, copyText } from '../ui.js';
 import { ESCAPE_MODES, escapeText, unescapeText } from '../lib/encoding.js';
 import { CASES, LINE_ACTIONS, analyze } from '../lib/textcase.js';
+import { parseJson } from '../lib/json.js';
+import { captureNames } from '../lib/regex.js';
 
 const C = 'Text';
 
@@ -64,7 +66,7 @@ const diff = {
       const opts = { ignoreCase: ignoreCase.checked, ignoreWhitespace: ignoreWs.checked };
       let parts;
       if (mode.value === 'json') {
-        const norm = (t) => JSON.stringify(JSON.parse(t), null, 2);
+        const norm = (t) => JSON.stringify(parseJson(t), null, 2); // keeps 64-bit IDs exact
         left = norm(left); right = norm(right);
         parts = Diff.diffLines(left, right, opts);
       } else if (mode.value === 'lines') parts = Diff.diffLines(left, right, { ...opts, newlineIsToken: false });
@@ -150,7 +152,7 @@ function matchRegex({ source, flags, text, replacement }) {
   if (re.global || re.sticky) {
     for (const m of text.matchAll(re.global ? re : new RegExp(source, `${flags}g`))) { found.push(m); if (found.length > 5000) break; }
   } else { const m = re.exec(text); if (m) found.push(m); }
-  const matches = found.map((m) => ({ items: [...m], index: m.index, names: m.groups ? Object.keys(m.groups) : [] }));
+  const matches = found.map((m) => ({ items: [...m], index: m.index }));
   return { matches, replacedText: replacement ? text.replace(new RegExp(source, flags), replacement) : '' };
 }
 
@@ -190,7 +192,7 @@ function runRegex(source, flags, text, replacement) {
     worker.postMessage(job);
   });
 }
-const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index, names: m.names })), replacedText });
+const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index })), replacedText });
 
 const regex = {
   id: 'regex', name: 'Regex tester', category: C, icon: 'regex',
@@ -225,7 +227,7 @@ const regex = {
       highlight.append(text.slice(last));
       stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}`);
       if (matches.length) {
-        const names = matches[0].names;
+        const names = captureNames(pattern.value);
         const cols = matches[0].length - 1;
         groups.append(card('Groups', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
           h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Index'), h('th', {}, 'Match'), Array.from({ length: cols }, (_, i) => h('th', {}, names[i] ? `${i + 1} ‹${names[i]}›` : `${i + 1}`)))),
