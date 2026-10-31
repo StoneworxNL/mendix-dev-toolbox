@@ -22,3 +22,13 @@ export function parseJson(text) {
 
 /** Whether a parsed value is a number kept as raw JSON. */
 export const isRawNumber = (v) => LOSSLESS && JSON.isRawJSON(v);
+
+/**
+ * A number for the integer text `digits`: a plain number when that is exact, otherwise raw JSON
+ * (or null when this engine cannot keep it, so the caller can fall back to text).
+ */
+export function exactInteger(digits) {
+  const n = Number(digits);
+  if (Number.isSafeInteger(n)) return n;
+  return LOSSLESS && /^-?(0|[1-9]\d*)$/.test(digits) ? JSON.rawJSON(digits) : null;
+}

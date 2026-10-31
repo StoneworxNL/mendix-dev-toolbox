@@ -1,12 +1,45 @@
 import jsyaml from 'js-yaml';
 import cronstrue from 'cronstrue';
 import { h, clear, textArea, select, checkbox, input, number, field, options, split, status, live, kv, card, button, download } from '../ui.js';
-import { jsonToRows, toDelimited, toMarkdown, parseDelimited } from '../lib/table.js';
+import { jsonToRows, toDelimited, toMarkdown, parseDelimited, cellText } from '../lib/table.js';
 import { BASES, parseBigInt, formatBigInt, twosComplement } from '../lib/numbers.js';
 import { nextOccurrences, parseCron } from '../lib/cron.js';
-import { isRawNumber } from '../lib/json.js';
+import { isRawNumber, parseJson, exactInteger, unsafeIntegers, LOSSLESS } from '../lib/json.js';
 
 const C = 'Converters';
+
+// YAML with integers beyond 2^53 (Mendix object IDs) kept exactly in both directions: this int
+// type replaces js-yaml's own, reads large decimal integers as raw JSON and writes them back as digits.
+const baseInt = jsyaml.types.int;
+const exactInt = new jsyaml.Type('tag:yaml.org,2002:int', {
+  kind: 'scalar',
+  resolve: baseInt.resolve,
+  construct: (data) => {
+    const value = baseInt.construct(data);
+    if (Number.isSafeInteger(value)) return value;
+    const digits = data.replace(/_/g, '').replace(/^\+/, '');
+    return exactInteger(digits) ?? value;
+  },
+  predicate: (v) => isRawNumber(v) || baseInt.predicate(v),
+  represent: Object.fromEntries(Object.entries(baseInt.represent).map(([style, fn]) => [style, (v) => (isRawNumber(v) ? v.rawJSON : fn(v))])),
+  defaultStyle: baseInt.defaultStyle,
+});
+export const YAML_SCHEMA = jsyaml.DEFAULT_SCHEMA.extend({ implicit: [exactInt] });
+
+export const jsonToYaml = (text, options = {}) => jsyaml.dump(parseJson(text), { lineWidth: -1, noRefs: true, ...options, schema: YAML_SCHEMA });
+export function yamlToJson(text, { indent = 2, sort = false } = {}) {
+  const docs = jsyaml.loadAll(text, null, { schema: YAML_SCHEMA });
+  let data = docs.length === 1 ? docs[0] : docs;
+  if (sort) data = sortDeep(data);
+  return JSON.stringify(data, null, indent);
+}
+
+/** Status text for JSON with integers that need care, or '' when there are none. */
+export function largeIntegerNote(text) {
+  const n = unsafeIntegers(text).length;
+  if (!n) return '';
+  return LOSSLESS ? `${n} integer${n === 1 ? '' : 's'} beyond 2^53 (like Mendix object IDs) kept exactly.` : `${n} integer${n === 1 ? ' is' : 's are'} too large for JavaScript and rounded.`;
+}
 
 const jsonYaml = {
   id: 'json-yaml', name: 'JSON ↔ YAML', category: C, icon: 'swap',
@@ -25,12 +58,11 @@ const jsonYaml = {
       if (!src.value.trim()) { out.value = ''; return; }
       const n = Number(indent.value);
       if (dir.value === 'json-yaml') {
-        out.value = jsyaml.dump(JSON.parse(src.value), { indent: n, sortKeys: sortKeys.checked, lineWidth: -1, noRefs: true });
+        out.value = jsonToYaml(src.value, { indent: n, sortKeys: sortKeys.checked });
+        const note = largeIntegerNote(src.value);
+        if (note) stat.info(note);
       } else {
-        const docs = jsyaml.loadAll(src.value);
-        let data = docs.length === 1 ? docs[0] : docs;
-        if (sortKeys.checked) data = sortDeep(data);
-        out.value = JSON.stringify(data, null, n);
+        out.value = yamlToJson(src.value, { indent: n, sort: sortKeys.checked });
       }
     }, stat);
     return run;
@@ -69,8 +101,8 @@ const jsonTable = {
       out.value = format.value === 'md' ? toMarkdown(table) : toDelimited(table, { csv: ',', tsv: '\t', semicolon: ';' }[format.value]);
       grid.append(h('table', { class: 'grid' },
         h('thead', {}, h('tr', {}, table.columns.map((c) => h('th', {}, c)))),
-        h('tbody', {}, table.rows.slice(0, 500).map((r) => h('tr', {}, table.columns.map((c) => h('td', {}, r[c] === undefined ? '' : String(r[c]))))))));
-      stat.info(`${table.rows.length} rows × ${table.columns.length} columns${table.rows.length > 500 ? ' (preview shows 500)' : ''}`);
+        h('tbody', {}, table.rows.slice(0, 500).map((r) => h('tr', {}, table.columns.map((c) => h('td', {}, cellText(r[c]))))))));
+      stat.info(`${table.rows.length} rows × ${table.columns.length} columns${table.rows.length > 500 ? ' (preview shows 500)' : ''}. ${largeIntegerNote(src.value)}`.trim());
     }, stat);
   },
 };
