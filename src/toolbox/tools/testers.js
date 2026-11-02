@@ -9,10 +9,50 @@ const C = 'Testers';
 const toBigInts = (v) => (isRawNumber(v) ? BigInt(v.rawJSON) : Array.isArray(v) ? v.map(toBigInts) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toBigInts(x)])) : v);
 const exactReplacer = (key, value) => (typeof value === 'bigint' ? JSON.rawJSON(String(value)) : value);
 
+/**
+ * Replaces integer literals in a JSONPath expression that a number cannot hold exactly (outside
+ * quotes) with sandbox variables holding BigInts, so `@.id == 281474976710657123` matches.
+ */
+export function bigIntLiterals(path) {
+  const sandbox = {};
+  let out = '';
+  for (let i = 0; i < path.length;) {
+    const c = path[i];
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < path.length && path[j] !== c) j += path[j] === '\\' ? 2 : 1;
+      out += path.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    const m = /^\d+/.exec(path.slice(i));
+    // Whole integers only: not part of a name, a decimal (1.5) or an exponent (1e30).
+    if (m && !/[\w.$]/.test(path[i - 1] ?? '') && !/^[.eE]/.test(path.slice(i + m[0].length))) {
+      if (!Number.isSafeInteger(Number(m[0]))) {
+        const name = `_mxId${Object.keys(sandbox).length}`;
+        sandbox[name] = BigInt(m[0]);
+        out += name;
+      } else out += m[0];
+      i += m[0].length;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return { path: out, sandbox };
+}
+
 /** Runs a JSONPath query on JSON text; values come back as JSON text with large integers exact. */
 export function queryJson(text, path, resultType = 'value') {
   const json = toBigInts(parseJson(text));
-  const result = JSONPath({ path, json, resultType, eval: 'safe' });
+  const query = bigIntLiterals(path);
+  let result;
+  try {
+    result = JSONPath({ path: query.path, json, resultType, eval: 'safe', sandbox: query.sandbox });
+  } catch (e) {
+    if (/mix BigInt/i.test(e.message)) throw new Error('Arithmetic on integers beyond 2^53 (like Mendix object IDs) is not supported in filters; compare them directly, for example @.id == 281474976710657123 or @.id > 1000.');
+    throw e;
+  }
   return { count: result.length, text: resultType === 'value' ? JSON.stringify(result, exactReplacer, 2) : result.join('\n') };
 }
 

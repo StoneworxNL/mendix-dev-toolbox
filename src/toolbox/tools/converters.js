@@ -4,7 +4,7 @@ import { h, clear, textArea, select, checkbox, input, number, field, options, sp
 import { jsonToRows, toDelimited, toMarkdown, parseDelimited, cellText } from '../lib/table.js';
 import { BASES, parseBigInt, formatBigInt, twosComplement } from '../lib/numbers.js';
 import { nextOccurrences, parseCron } from '../lib/cron.js';
-import { isRawNumber, parseJson, exactInteger, unsafeIntegers, LOSSLESS } from '../lib/json.js';
+import { isRawNumber, parseJson, exactInteger, unsafeIntegers, LOSSLESS, ExactInteger } from '../lib/json.js';
 
 const C = 'Converters';
 
@@ -18,7 +18,8 @@ const exactInt = new jsyaml.Type('tag:yaml.org,2002:int', {
     const value = baseInt.construct(data);
     if (Number.isSafeInteger(value)) return value;
     const digits = data.replace(/_/g, '').replace(/^\+/, '');
-    return exactInteger(digits) ?? value;
+    // ExactInteger rather than raw JSON, so an ID used as a mapping key becomes its digits.
+    return exactInteger(digits) === null ? value : new ExactInteger(digits);
   },
   predicate: (v) => isRawNumber(v) || baseInt.predicate(v),
   represent: Object.fromEntries(Object.entries(baseInt.represent).map(([style, fn]) => [style, (v) => (isRawNumber(v) ? v.rawJSON : fn(v))])),

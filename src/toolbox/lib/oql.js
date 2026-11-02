@@ -35,6 +35,8 @@ export const FUNCTIONS = [
   { name: 'STRING_AGG', syntax: "STRING_AGG(path, 'separator')", description: 'Aggregate: joins strings with a separator.' },
 ];
 const FUNCTION_NAMES = new Set(FUNCTIONS.map((f) => f.name));
+const JAVA_ONLY = new Set(FUNCTIONS.filter((f) => f.javaOnly).map((f) => f.name));
+const JAVA_ONLY_WHERE = 'only in OQL from Java actions, not in view entities or data sets';
 
 const tok = (type, value, pos) => ({ type, value, pos });
 
@@ -291,6 +293,9 @@ export function lintOql(src) {
     if (t.type === 'word' && /^(GETDATE|NOW|CURRENT_TIMESTAMP)$/i.test(t.value)) add('error', `${t.value} is not available in OQL; use '[%CurrentDateTime%]'`, t);
     if (t.type === 'word' && /^(CONCAT)$/i.test(t.value) && next?.value === '(') add('error', 'CONCAT() is not an OQL function; use + to join strings', t);
     if (t.type === 'word' && t.value.toUpperCase() === 'BETWEEN') add('error', 'OQL has no BETWEEN; use x >= a AND x <= b', t);
+    if (t.type === 'word' && JAVA_ONLY.has(t.value.toUpperCase()) && next?.value === '(') add('hint', `${t.value.toUpperCase()} works ${JAVA_ONLY_WHERE}`, t);
+    if (t.type === 'param' && t.value.includes('.')) add('hint', `Constants like ${t.value} work ${JAVA_ONLY_WHERE}`, t);
+    if (t.type === 'word' && /#\w/.test(t.value)) add('hint', `Enumeration values like ${t.value} work ${JAVA_ONLY_WHERE}`, t);
   }
 
   // Query structure, per query level (subqueries handled recursively by scanning parentheses).
