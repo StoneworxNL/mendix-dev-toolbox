@@ -3,7 +3,7 @@ import { formatOql, lintOql, buildSelect, FUNCTIONS as OQL_FUNCTIONS } from '../
 import { lintConstraint, relativeDateConstraint, resolveDateToken, evaluateDateExpression, TOKENS, FUNCTIONS as XPATH_FUNCTIONS, DATE_TOKEN_NAMES, PERIOD_NAMES } from '../lib/mxxpath.js';
 import { formatDate, parseDate, mendixLiteral, LETTERS } from '../lib/datepattern.js';
 import { normalizeModel, associationsOf, allAttributes, typeLabel, toMermaid, toMarkdown, SAMPLE_UNITS, SAMPLE_ENUMERATIONS, SAMPLE_DOCUMENTS } from '../lib/mxmodel.js';
-import { checkNaming, parseRules, DEFAULT_RULES } from '../lib/naming.js';
+import { checkNaming, parseRules, isChecked, DEFAULT_RULES } from '../lib/naming.js';
 
 const C = 'Mendix';
 
@@ -171,9 +171,9 @@ const oql = {
     const builderCard = card('Query builder', sourceBar(ctx, (a) => { app = a; renderBuilder(); }), builder);
 
     const reference = card('OQL functions', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Syntax'), h('th', {}, 'Description'), h('th', {}, 'Since'))),
-      h('tbody', {}, OQL_FUNCTIONS.map((f) => h('tr', {}, h('td', { class: 'mono' }, f.syntax), h('td', {}, f.description), h('td', {}, f.since ?? '')))))),
-    h('p', { class: 'hint' }, 'Operators: + - * : (divide) % = != < <= > >= AND OR NOT LIKE IN EXISTS IS [NOT] NULL. Parameters: $Name (data sets). Quote reserved names: Sales."Order". System variables go in quotes: \'[%CurrentUser%]\'.'));
+      h('thead', {}, h('tr', {}, h('th', {}, 'Syntax'), h('th', {}, 'Description'), h('th', {}, 'Since'), h('th', {}, 'Where'))),
+      h('tbody', {}, OQL_FUNCTIONS.map((f) => h('tr', {}, h('td', { class: 'mono' }, f.syntax), h('td', {}, f.description), h('td', {}, f.since ?? ''), h('td', {}, f.javaOnly ? 'Java actions only' : '')))))),
+    h('p', { class: 'hint' }, 'Operators: + - * : (divide) % = != < <= > >= AND OR NOT LIKE IN EXISTS IS [NOT] NULL. Parameters: $Name (data sets). Constants: $Module.Constant and enumeration values: Module.Enumeration#Value (11.13, Java actions). Quote reserved names: Sales."Order". System variables go in quotes: \'[%CurrentUser%]\'.'));
 
     clear(root, options(field('Keyword case', keywordCase), field('Indent', indent)), stat.root, issuesBox, split(src.root, out.root), builderCard, reference);
     return live(root, () => {
@@ -214,7 +214,7 @@ const xpath = {
     const operator = select(['>=', '>', '<', '<=', '=', '!='], { persist: 'op', label: 'Operator' });
     const base = select(DATE_TOKEN_NAMES, { value: 'BeginOfCurrentDay', persist: 'base', label: 'Token' });
     const amount = number({ value: -7, persist: 'amount', width: '80px' });
-    const period = select(PERIOD_NAMES.filter((p) => p !== 'MillisecondLength'), { value: 'DayLength', persist: 'period', label: 'Period' });
+    const period = select(PERIOD_NAMES, { value: 'DayLength', persist: 'period', label: 'Period' });
     const utc = checkbox('UTC', { persist: 'utc' });
     const built = h('code', { class: 'mono' });
     const builtValue = h('span', { class: 'hint' });
@@ -227,7 +227,7 @@ const xpath = {
 
     const tokenRows = h('tbody');
     const tokens = card('Tokens', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' }, h('thead', {}, h('tr', {}, h('th', {}, 'Token'), h('th', {}, 'Now'), h('th', {}, 'Meaning'))), tokenRows)),
-      h('p', { class: 'hint' }, 'Tokens always go inside quotes. Date tokens can be combined with periods in one string, without parentheses: \'[%BeginOfCurrentDay%] - 3 * [%YearLength%] + [%HourLength%]\'. Values here use this computer\'s time zone; in Mendix the non-UTC tokens use the user\'s time zone.'));
+      h('p', { class: 'hint' }, 'Tokens always go inside quotes. Date tokens can be combined with periods in one string, without parentheses: \'[%BeginOfCurrentDay%] - 3 * [%YearLength%] + [%HourLength%]\'. Values here use this computer\'s time zone; in Mendix the non-UTC tokens use the user\'s time zone. Days, weeks, months and years are added as calendar steps here, so across a daylight saving change a day is 23 or 25 hours; Mendix describes [%DayLength%] as 24 hours, so check in your app when that hour matters.'));
     const functions = card('Functions', h('table', { class: 'grid' }, h('tbody', {}, XPATH_FUNCTIONS.map(([f, d]) => h('tr', {}, h('td', { class: 'mono' }, f), h('td', {}, d))))),
       h('p', { class: 'hint' }, 'Operators: = != < <= > >= and or; + - * div in server-side XPath. Empty values: [Name = empty] or [Name != empty]. Association paths: [Module.Order_Customer/Module.Customer/Name = \'x\'], or just [Module.Order_Customer] to require one.'));
 
@@ -368,7 +368,7 @@ const naming = {
       issues = checkNaming({ documents: app.documents.filter((d) => allowed(d.module)), model, modules: app.modules.map((m) => m.name).filter(allowed) }, parsedRules)
         .filter((i) => hints.checked || i.severity !== 'hint');
       const count = (s) => issues.filter((i) => i.severity === s).length;
-      const checked = app.documents.filter((d) => allowed(d.module)).length + model.entities.length + model.associations.length;
+      const checked = app.documents.filter((d) => allowed(d.module) && isChecked(d.kind, parsedRules)).length + model.entities.length + model.associations.length;
       const skipped = app.unavailable.length ? ` Not checked, because this Studio Pro version can't list them: ${app.unavailable.join(', ')}.` : '';
       if (!issues.length && !skipped) stat.ok(`Checked ${checked} names: all follow the conventions.`);
       else stat.info(`Checked ${checked} names: ${count('error')} errors, ${count('warning')} warnings${hints.checked ? `, ${count('hint')} hints` : ''}.${skipped}`);

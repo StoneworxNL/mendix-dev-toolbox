@@ -3,29 +3,29 @@
 
 export const RESERVED = new Set(('ALL AND AS ASC AVG BOOLEAN BY CASE CAST CONFLICT COUNT DATEDIFF DATEPART DATETIME DAY DAYOFYEAR DECIMAL DELETE DESC DISTINCT DUPLICATE ELSE END EXISTS FALSE FLOAT FROM FULL GROUP HAVING HOUR IGNORE IN INNER INSERT INTEGER INTO IS JOIN KEY LEFT LIKE LIMIT LONG MATCHED MAX MERGE MILLISECOND MIN MINUTE MONTH NOT NULL OFFSET ON OR ORDER OUTER QUARTER REPLACE RIGHT SECOND SELECT SET SOURCE STRING STRING_AGG SUM TARGET THEN TRUE UNION UPDATE UPSERT USING VALUES WEEK WEEKDAY WHEN WHERE WITH YEAR').split(' '));
 
-/** OQL functions with their syntax and the Mendix version that introduced them (when newer than 10). */
+/** OQL functions with their syntax, the Mendix version that introduced them (when newer than 10) and whether they only work in OQL run from Java actions. */
 export const FUNCTIONS = [
   { name: 'CAST', syntax: 'CAST(expression AS BOOLEAN | DATETIME | DECIMAL[(precision, scale)] | INTEGER | LONG | STRING)', description: 'Converts a value to another type.' },
   { name: 'COALESCE', syntax: 'COALESCE(expression, expression [, ...])', description: 'Returns the first argument that is not NULL. All arguments must have compatible types.' },
-  { name: 'DATEADD', syntax: 'DATEADD(datepart, length, date [, timezone])', description: 'Adds a number of date parts (YEAR, MONTH, DAY, HOUR, ...) to a date.', since: '11.9' },
+  { name: 'DATEADD', syntax: 'DATEADD(datepart, length, date [, timezone])', description: 'Adds a number of date parts (YEAR, MONTH, DAY, HOUR, ...) to a date.', since: '11.9', javaOnly: true },
   { name: 'DATEDIFF', syntax: 'DATEDIFF(unit, startdate, enddate [, timezone])', description: 'Difference between two dates in YEAR, QUARTER, MONTH, DAY, WEEK, HOUR, MINUTE, SECOND or MILLISECOND.' },
   { name: 'DATEFORMAT', syntax: "DATEFORMAT(expression, 'pattern')", description: 'Formats a date as a string.', since: '11.12' },
-  { name: 'DATEPARSE', syntax: "DATEPARSE(expression, 'pattern')", description: 'Parses a string into a date.', since: '11.10' },
+  { name: 'DATEPARSE', syntax: "DATEPARSE(expression, 'pattern')", description: 'Parses a string into a date.', since: '11.10', javaOnly: true },
   { name: 'DATEPART', syntax: 'DATEPART(datepart, date [, timezone])', description: 'Extracts YEAR, QUARTER, MONTH, DAYOFYEAR, DAY, WEEK, WEEKDAY, HOUR, MINUTE, SECOND or MILLISECOND.' },
-  { name: 'DATETRUNC', syntax: 'DATETRUNC(datepart, date [, timezone])', description: 'Truncates a date to the given date part.', since: '11.9' },
+  { name: 'DATETRUNC', syntax: 'DATETRUNC(datepart, date [, timezone])', description: 'Truncates a date to the given date part.', since: '11.9', javaOnly: true },
   { name: 'LENGTH', syntax: 'LENGTH(expression)', description: 'Number of characters in a string.' },
-  { name: 'LOCATE', syntax: 'LOCATE(substring, string [, start])', description: 'Position of a substring, starting at 1; 0 when not found.', since: '11.9' },
+  { name: 'LOCATE', syntax: 'LOCATE(expression, substring [, offset])', description: 'Position of the substring in the expression, starting at 1; 0 when not found.', since: '11.9', javaOnly: true },
   { name: 'LOWER', syntax: 'LOWER(expression)', description: 'Converts a string to lower case.' },
   { name: 'LPAD', syntax: "LPAD(expression, length [, 'fill'])", description: 'Pads a string on the left to a given length.', since: '11.12' },
-  { name: 'LTRIM', syntax: 'LTRIM(expression)', description: 'Removes leading whitespace.', since: '11.11' },
+  { name: 'LTRIM', syntax: "LTRIM(expression [, 'character'])", description: 'Removes leading whitespace, or the given character.', since: '11.11' },
   { name: 'RANGEBEGIN', syntax: 'RANGEBEGIN($rangeParameter)', description: 'Start value of a range parameter (data sets).' },
   { name: 'RANGEEND', syntax: 'RANGEEND($rangeParameter)', description: 'End value of a range parameter (data sets).' },
   { name: 'REPLACE', syntax: 'REPLACE(expression, pattern, replacement)', description: 'Replaces every occurrence of a substring.' },
   { name: 'ROUND', syntax: 'ROUND(expression, decimals)', description: 'Rounds a number. In OQL v2 the result is always a Decimal.' },
   { name: 'RPAD', syntax: "RPAD(expression, length [, 'fill'])", description: 'Pads a string on the right to a given length.', since: '11.12' },
-  { name: 'RTRIM', syntax: 'RTRIM(expression)', description: 'Removes trailing whitespace.', since: '11.11' },
-  { name: 'SUBSTRING', syntax: 'SUBSTRING(expression, start [, length])', description: 'Part of a string, starting at 1.', since: '11.9' },
-  { name: 'TRIM', syntax: 'TRIM(expression)', description: 'Removes leading and trailing whitespace.', since: '11.11' },
+  { name: 'RTRIM', syntax: "RTRIM(expression [, 'character'])", description: 'Removes trailing whitespace, or the given character.', since: '11.11' },
+  { name: 'SUBSTRING', syntax: 'SUBSTRING(expression, start [, length])', description: 'Part of a string, starting at 1.', since: '11.9', javaOnly: true },
+  { name: 'TRIM', syntax: "TRIM(expression [, 'character'])", description: 'Removes leading and trailing whitespace, or the given character.', since: '11.11' },
   { name: 'UPPER', syntax: 'UPPER(expression)', description: 'Converts a string to upper case.' },
   { name: 'COUNT', syntax: 'COUNT(*) | COUNT([DISTINCT] path)', description: 'Aggregate: number of rows or non-NULL values.' },
   { name: 'AVG', syntax: 'AVG([DISTINCT] path)', description: 'Aggregate: average.' },
@@ -35,6 +35,8 @@ export const FUNCTIONS = [
   { name: 'STRING_AGG', syntax: "STRING_AGG(path, 'separator')", description: 'Aggregate: joins strings with a separator.' },
 ];
 const FUNCTION_NAMES = new Set(FUNCTIONS.map((f) => f.name));
+const JAVA_ONLY = new Set(FUNCTIONS.filter((f) => f.javaOnly).map((f) => f.name));
+const JAVA_ONLY_WHERE = 'only in OQL from Java actions, not in view entities or data sets';
 
 const tok = (type, value, pos) => ({ type, value, pos });
 
@@ -51,7 +53,7 @@ export function tokenize(src) {
     if (/\s/.test(c)) { while (i < src.length && /\s/.test(src[i])) i++; out.push(tok('ws', src.slice(start, i), start)); continue; }
     if (c === '-' && src[i + 1] === '-') { while (i < src.length && src[i] !== '\n') i++; out.push(tok('comment', src.slice(start, i), start)); continue; }
     if (c === '/' && src[i + 1] === '*') {
-      // Block comments nest since Mendix 11.15.
+      // Comments (since Mendix 11.7) can nest.
       let depth = 0;
       while (i < src.length) {
         if (src[i] === '/' && src[i + 1] === '*') { depth++; i += 2; } else if (src[i] === '*' && src[i + 1] === '/') { depth--; i += 2; if (!depth) break; } else i++;
@@ -84,7 +86,13 @@ export function tokenize(src) {
       out.push(tok('sysvar', src.slice(start, i), start));
       continue;
     }
-    if (c === '$') { i++; while (i < src.length && /\w/.test(src[i])) i++; out.push(tok('param', src.slice(start, i), start)); continue; }
+    // Parameters ($Name) and, since Mendix 11.13, constants ($Module.Constant).
+    if (c === '$') {
+      i++;
+      while (i < src.length && (/\w/.test(src[i]) || (src[i] === '.' && /[A-Za-z_]/.test(src[i + 1] ?? '')))) i++;
+      out.push(tok('param', src.slice(start, i), start));
+      continue;
+    }
     if (/\d/.test(c) || (c === '.' && /\d/.test(src[i + 1] ?? ''))) {
       while (i < src.length && /[\d.]/.test(src[i])) i++;
       if (/[eE]/.test(src[i] ?? '') && /[-+\d]/.test(src[i + 1] ?? '')) { i += 2; while (/\d/.test(src[i] ?? '')) i++; }
@@ -103,6 +111,8 @@ export function tokenize(src) {
         }
         break;
       }
+      // Enumeration values (Module.Enumeration#Value, since Mendix 11.13) stay one word too.
+      if (src[i] === '#' && /[A-Za-z_]/.test(src[i + 1] ?? '')) { i++; while (i < src.length && /\w/.test(src[i])) i++; }
       out.push(tok('word', src.slice(start, i), start));
       continue;
     }
@@ -283,6 +293,9 @@ export function lintOql(src) {
     if (t.type === 'word' && /^(GETDATE|NOW|CURRENT_TIMESTAMP)$/i.test(t.value)) add('error', `${t.value} is not available in OQL; use '[%CurrentDateTime%]'`, t);
     if (t.type === 'word' && /^(CONCAT)$/i.test(t.value) && next?.value === '(') add('error', 'CONCAT() is not an OQL function; use + to join strings', t);
     if (t.type === 'word' && t.value.toUpperCase() === 'BETWEEN') add('error', 'OQL has no BETWEEN; use x >= a AND x <= b', t);
+    if (t.type === 'word' && JAVA_ONLY.has(t.value.toUpperCase()) && next?.value === '(') add('hint', `${t.value.toUpperCase()} works ${JAVA_ONLY_WHERE}`, t);
+    if (t.type === 'param' && t.value.includes('.')) add('hint', `Constants like ${t.value} work ${JAVA_ONLY_WHERE}`, t);
+    if (t.type === 'word' && /#\w/.test(t.value)) add('hint', `Enumeration values like ${t.value} work ${JAVA_ONLY_WHERE}`, t);
   }
 
   // Query structure, per query level (subqueries handled recursively by scanning parentheses).

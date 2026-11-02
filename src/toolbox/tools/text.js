@@ -4,6 +4,8 @@ import DOMPurify from 'dompurify';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, copyText } from '../ui.js';
 import { ESCAPE_MODES, escapeText, unescapeText } from '../lib/encoding.js';
 import { CASES, LINE_ACTIONS, analyze } from '../lib/textcase.js';
+import { parseJson } from '../lib/json.js';
+import { captureNames, createRegexRunner, WORKER_SOURCE, INLINE_LIMIT } from '../lib/regex.js';
 
 const C = 'Text';
 
@@ -64,7 +66,7 @@ const diff = {
       const opts = { ignoreCase: ignoreCase.checked, ignoreWhitespace: ignoreWs.checked };
       let parts;
       if (mode.value === 'json') {
-        const norm = (t) => JSON.stringify(JSON.parse(t), null, 2);
+        const norm = (t) => JSON.stringify(parseJson(t), null, 2); // keeps 64-bit IDs exact
         left = norm(left); right = norm(right);
         parts = Diff.diffLines(left, right, opts);
       } else if (mode.value === 'lines') parts = Diff.diffLines(left, right, { ...opts, newlineIsToken: false });
@@ -143,44 +145,19 @@ const markdown = {
 
 const FLAGS = { g: 'global', i: 'ignore case', m: 'multiline', s: 'dot matches newline', u: 'unicode', y: 'sticky' };
 
-/** Runs a regex over text; self-contained so it can also run in a worker. */
-function matchRegex({ source, flags, text, replacement }) {
-  const re = new RegExp(source, flags);
-  const found = [];
-  if (re.global || re.sticky) {
-    for (const m of text.matchAll(re.global ? re : new RegExp(source, `${flags}g`))) { found.push(m); if (found.length > 5000) break; }
-  } else { const m = re.exec(text); if (m) found.push(m); }
-  const matches = found.map((m) => ({ items: [...m], index: m.index, names: m.groups ? Object.keys(m.groups) : [] }));
-  return { matches, replacedText: replacement ? text.replace(new RegExp(source, flags), replacement) : '' };
-}
-
-// Matching runs in a worker with a time limit, so a pattern with catastrophic backtracking
-// cannot freeze Studio Pro's tab or pane.
-const REGEX_TIMEOUT_MS = 1500;
-let regexWorker = null;
-let pending = null;
-function runRegex(source, flags, text, replacement) {
-  const job = { source, flags, text, replacement };
-  pending?.cancel(); // a newer input replaces the running one
-  if (!regexWorker) {
-    try {
-      const url = URL.createObjectURL(new Blob([`const matchRegex = ${matchRegex.toString()};\nonmessage = ({ data }) => postMessage(matchRegex(data));`], { type: 'text/javascript' }));
-      regexWorker = new Worker(url);
-    } catch {
-      return Promise.resolve(unpack(matchRegex(job))); // workers blocked by the host: run inline
-    }
-  }
-  const worker = regexWorker;
-  return new Promise((resolve, reject) => {
-    const stop = () => { worker.terminate(); if (regexWorker === worker) regexWorker = null; };
-    const timer = setTimeout(() => { stop(); pending = null; reject(new Error(`Stopped after ${REGEX_TIMEOUT_MS / 1000} s: the pattern takes too long on this text (catastrophic backtracking?)`)); }, REGEX_TIMEOUT_MS);
-    pending = { cancel: () => { clearTimeout(timer); stop(); pending = null; } };
-    worker.onmessage = ({ data }) => { clearTimeout(timer); pending = null; resolve(unpack(data)); };
-    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); stop(); pending = null; reject(new Error(e.message)); };
-    worker.postMessage(job);
-  });
-}
-const unpack = ({ matches, replacedText }) => ({ matches: matches.map((m) => Object.assign(m.items, { index: m.index, names: m.names })), replacedText });
+// Set while matching runs inline (when the host blocks workers). If it is still set when the tool
+// opens, the last run froze the page, so the saved pattern is not run again by itself.
+const RUNNING_KEY = 'dtb:tool:regex:running';
+const marker = {
+  get: () => { try { return localStorage.getItem(RUNNING_KEY) !== null; } catch { return false; } },
+  set: () => { try { localStorage.setItem(RUNNING_KEY, '1'); } catch { /* storage blocked */ } },
+  clear: () => { try { localStorage.removeItem(RUNNING_KEY); } catch { /* storage blocked */ } },
+};
+const regexRunner = createRegexRunner({
+  makeWorker: () => new Worker(URL.createObjectURL(new Blob([WORKER_SOURCE], { type: 'text/javascript' }))),
+  onInlineStart: marker.set,
+  onInlineEnd: marker.clear,
+});
 
 const regex = {
   id: 'regex', name: 'Regex tester', category: C, icon: 'regex',
@@ -199,12 +176,14 @@ const regex = {
     const cheats = [['\\d', 'digit'], ['\\w', 'word char'], ['\\s', 'whitespace'], ['.', 'any char'], ['^ $', 'start / end'], ['[abc]', 'set'], ['(…)', 'group'], ['(?<name>…)', 'named group'], ['(?:…)', 'non-capturing'], ['a|b', 'either'], ['* + ?', '0+, 1+, 0-1'], ['{2,5}', 'count'], ['(?=…)', 'lookahead'], ['\\b', 'word boundary']];
     clear(root, field('Pattern', pattern), options(...flagBoxes.map(([, c]) => c.root)), stat.root, split(src.root, h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, 'Matches')), highlight)), groups, field('Replace with', replace), replaced.root,
       card('Cheat sheet', h('div', { class: 'cheats' }, cheats.map(([t, d]) => h('span', {}, h('code', {}, t), ` ${d}`)))));
-    return live(root, async () => {
-      const text = src.value;
+    const run = live(root, async () => {
+      let text = src.value;
       if (!pattern.value) { clear(groups); clear(highlight, text); replaced.value = ''; return; }
       const flags = flagBoxes.filter(([, c]) => c.checked).map(([f]) => f).join('');
       new RegExp(pattern.value, flags); // syntax errors show right away
-      const { matches, replacedText } = await runRegex(pattern.value, flags, text, replace.value);
+      const { matches, replacedText, inline, truncated } = await regexRunner.run(pattern.value, flags, text, replace.value);
+      if (truncated) text = text.slice(0, INLINE_LIMIT);
+      marker.clear(); // a run finished, so the saved pattern is safe to run on open
       clear(groups); clear(highlight);
       replaced.value = replacedText ?? '';
       let last = 0;
@@ -213,15 +192,22 @@ const regex = {
         last = m.index + m[0].length;
       }
       highlight.append(text.slice(last));
-      stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}`);
+      const note = truncated ? ` in the first ${INLINE_LIMIT.toLocaleString('en')} characters: Studio Pro blocks the background worker, so long text is cut and slow patterns are not stopped` : inline ? ' (Studio Pro blocks the background worker, so slow patterns are not stopped)' : '';
+      stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}${note}`);
       if (matches.length) {
-        const names = matches[0].names;
+        const names = captureNames(pattern.value);
         const cols = matches[0].length - 1;
         groups.append(card('Groups', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
           h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Index'), h('th', {}, 'Match'), Array.from({ length: cols }, (_, i) => h('th', {}, names[i] ? `${i + 1} ‹${names[i]}›` : `${i + 1}`)))),
           h('tbody', {}, matches.slice(0, 200).map((m, n) => h('tr', {}, h('td', {}, n + 1), h('td', {}, m.index), h('td', { class: 'mono' }, m[0]), Array.from({ length: cols }, (_, i) => h('td', { class: 'mono' }, m[i + 1] ?? '—')))))))));
       }
     }, stat);
+    // On open: if the last inline run never finished, it froze the page; wait for the user.
+    return () => {
+      if (!marker.get()) { run(); return; }
+      stat.info("The last run didn't finish, so the saved pattern was not run again. Change it if it is too slow, then press Run.");
+      stat.root.append(' ', button('Run', () => { marker.clear(); run(); }, { kind: 'ghost' }));
+    };
   },
 };
 

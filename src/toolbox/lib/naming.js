@@ -20,18 +20,24 @@ import mapping prefixes: IMM_
 export mapping prefixes: EXM_
 xml schema prefixes: XSD_
 json structure prefixes: JSON_
+# Workflows: a noun and a verb in PascalCase, without a prefix (EmployeeOnboarding).
+workflow style: PascalCase
 `;
 
-const KINDS = ['microflow', 'nanoflow', 'page', 'layout', 'snippet', 'enumeration', 'import mapping', 'export mapping', 'xml schema', 'json structure'];
+const KINDS = ['microflow', 'nanoflow', 'page', 'layout', 'snippet', 'enumeration', 'import mapping', 'export mapping', 'xml schema', 'json structure', 'workflow'];
 
-/** Parses rule text into `{ [kind]: { prefixes?: string[], suffixes?: string[], names?: string[] }, deprecated: Map }`. */
+/** Whether checkNaming looks at documents of this kind with these rules. */
+export const isChecked = (kind, rules) => Boolean(rules[kind.toLowerCase()]);
+
+/** Parses rule text into `{ [kind]: { prefixes?: string[], suffixes?: string[], names?: string[], style?: string[] }, deprecated: Map }`. */
 export function parseRules(text) {
   const rules = { deprecated: new Map() };
   for (const [n, raw] of text.split(/\r?\n/).entries()) {
     const line = raw.replace(/#.*$/, '').trim();
     if (!line) continue;
-    const m = /^([a-z ]+?)\s+(prefixes|suffixes|names)\s*:\s*(.*)$/i.exec(line);
-    if (!m) throw new Error(`Line ${n + 1}: write "<kind> prefixes: A_ B_", "<kind> suffixes: _X" or "<kind> names: Home_*"`);
+    const m = /^([a-z ]+?)\s+(prefixes|suffixes|names|style)\s*:\s*(.*)$/i.exec(line);
+    if (!m) throw new Error(`Line ${n + 1}: write "<kind> prefixes: A_ B_", "<kind> suffixes: _X", "<kind> names: Home_*" or "<kind> style: PascalCase"`);
+    if (m[2].toLowerCase() === 'style' && !/^pascalcase$/i.test(m[3].trim())) throw new Error(`Line ${n + 1}: the only style is PascalCase`);
     const kind = m[1].toLowerCase();
     const values = m[3].split(/[\s,]+/).filter(Boolean);
     if (kind === 'deprecated') { for (const v of values) { const [from, to] = v.split('='); rules.deprecated.set(from.toUpperCase(), to ?? ''); } continue; }
@@ -67,6 +73,11 @@ export function checkNaming({ documents = [], model = null, modules = [] }, rule
     const kind = d.kind.toLowerCase();
     const rule = rules[kind];
     if (!rule) continue;
+    if (rule.style && !pascal.test(d.name)) {
+      // Suggest the name without a prefix like WF_, in PascalCase.
+      const suggestion = d.name.replace(/^[A-Z]{2,5}_/i, '').split('_').filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
+      add(d.module, d.kind, d.name, 'warning', kind === 'workflow' ? 'Workflow names are a noun and a verb in PascalCase, without a prefix, like EmployeeOnboarding' : `${d.kind} names use PascalCase without a prefix`, suggestion || undefined);
+    }
     const prefix = /^([A-Za-z]+_)/.exec(d.name)?.[1];
     if (kind === 'microflow' || kind === 'nanoflow') {
       const known = rule.prefixes ?? [];

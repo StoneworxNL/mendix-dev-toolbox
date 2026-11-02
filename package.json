@@ -13,7 +13,8 @@
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
     "serve": "node build.mjs --serve",
-    "test": "node --test tests/web/*.test.mjs",
+    "test": "node --test tests/web/lib.test.mjs tests/web/timezone.test.mjs tests/web/fuzz.test.mjs",
+    "test:build": "node --test tests/web/build.test.mjs",
     "test:ui": "node tests/ui/smoke.mjs"
   },
   "dependencies": {

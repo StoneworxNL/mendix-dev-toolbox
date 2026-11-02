@@ -47,10 +47,14 @@ const SAMPLES = {
 };
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 const errors = [];
-page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-page.on('console', (m) => m.type() === 'error' && errors.push(`console: ${m.text()}`));
+const openPage = async () => {
+  const p = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  p.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  p.on('console', (m) => m.type() === 'error' && errors.push(`console: ${m.text()}`));
+  return p;
+};
+let page = await openPage();
 await page.goto(base);
 const ids = await page.$$eval('.tile', (tiles) => [...new Set(tiles.map((t) => t.dataset.tool))]);
 console.log(`${ids.length} tools`);
@@ -87,6 +91,27 @@ for (const id of ids) {
   if (shots) await page.screenshot({ path: `${shots}/${id}.png`, fullPage: false });
   console.log(`${problems.length ? 'FAIL' : 'ok  '} ${id}${problems.length ? `\n     ${problems.join('\n     ')}` : ''}`);
   if (problems.length) failed++;
+}
+
+// Hostile input: every tool must stay responsive and not throw. If typing and a round trip to
+// the page take more than 5 s, the tool is stuck in a loop.
+const EVIL = ['[%BeginOfCurrentDay', '\'unclosed "quote /* [% $ # \\', 'x'.repeat(200000), '😀\u0000‮{"a":[', ''];
+const within = (ms, work) => Promise.race([work.then(() => true), new Promise((r) => setTimeout(() => r(false), ms))]);
+for (const id of ids) {
+  const before = errors.length;
+  await page.goto(`${base}?tool=${id}`);
+  await page.waitForSelector('.tool-body > *');
+  const field = (await page.$('.tool-body textarea:not([readonly]):visible')) ?? (await page.$('.tool-body input.mono[type=text]:visible'));
+  if (!field) continue;
+  const problems = [];
+  for (const text of EVIL) {
+    const ok = await within(5000, (async () => { await field.fill(text); await page.waitForTimeout(250); await page.evaluate(() => true); })().catch((e) => problems.push(`fill failed: ${e.message.split('\n')[0]}`)));
+    if (!ok) { problems.push(`stuck after ${JSON.stringify(text.slice(0, 40))}`); break; }
+  }
+  problems.push(...errors.slice(before));
+  if (problems.length) { console.log(`FAIL ${id} (hostile input)\n     ${problems.join('\n     ')}`); failed++; }
+  else console.log(`ok   ${id} (hostile input)`);
+  if (problems.some((p) => p.startsWith('stuck'))) { await within(2000, page.close()); page = await openPage(); } // a stuck page cannot be reused
 }
 
 // Narrow viewport, like a docked pane.

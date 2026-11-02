@@ -285,3 +285,141 @@ test('naming check follows the Mendix conventions', () => {
   assert.equal(find('my_module')[0].severity, 'warning');
   assert.throws(() => naming.parseRules('widgets prefixes: W_'), /unknown kind/);
 });
+
+test('XPath check stops at an unclosed token and knows only documented periods', () => {
+  const { issues } = mxx.lintConstraint('[OrderDate > [%BeginOfCurrentDay]');
+  assert.match(issues.map((i) => i.message).join('\n'), /Unterminated \[% token/);
+  assert.ok(!mxx.PERIOD_NAMES.includes('MillisecondLength'));
+  assert.throws(() => mxx.evaluateDateExpression('[%CurrentDateTime%] + [%MillisecondLength%]'), /is not a period/);
+  assert.equal(mxx.lintConstraint('[Name = empty][Code != NULL]').issues.length, 0);
+  assert.match(mxx.lintConstraint('[Name = null]').issues[0].message, /empty or NULL/);
+});
+
+test('OQL accepts constants and enumeration values', () => {
+  const javaOnlyHints = (q) => oql.lintOql(q).map((i) => `${i.severity}: ${i.message}`);
+  assert.deepEqual(javaOnlyHints('SELECT o.Total AS T FROM Sales.Product AS o WHERE o.Total > $Sales.MinOrder'), ['hint: Constants like $Sales.MinOrder work only in OQL from Java actions, not in view entities or data sets']);
+  assert.deepEqual(javaOnlyHints('SELECT p.Name AS N FROM RealEstate.Property AS p WHERE p.Kind = RealEstate.PropertyTypes#Apartment'), ['hint: Enumeration values like RealEstate.PropertyTypes#Apartment work only in OQL from Java actions, not in view entities or data sets']);
+  assert.deepEqual(javaOnlyHints("SELECT DATETRUNC(DAY, o.Date) AS D FROM M.O AS o"), ['hint: DATETRUNC works only in OQL from Java actions, not in view entities or data sets']);
+  assert.deepEqual(javaOnlyHints('SELECT o.Date AS D FROM M.O AS o WHERE $Param = 1'), []);
+  assert.match(oql.formatOql('select p.Name from M.P as p where p.Kind = M.Kinds#Big and p.Price > $M.Min'), /p\.Kind = M\.Kinds#Big\n  AND p\.Price > \$M\.Min/);
+  assert.equal(oql.FUNCTIONS.find((f) => f.name === 'LOCATE').syntax, 'LOCATE(expression, substring [, offset])');
+  assert.deepEqual(oql.FUNCTIONS.filter((f) => f.javaOnly).map((f) => f.name).sort(), ['DATEADD', 'DATEPARSE', 'DATETRUNC', 'LOCATE', 'SUBSTRING']);
+});
+
+test('naming check covers workflows', () => {
+  const issues = naming.checkNaming({ documents: mxm.SAMPLE_DOCUMENTS });
+  assert.equal(issues.filter((i) => i.name === 'OrderApproval').length, 0);
+  assert.equal(issues.find((i) => i.name === 'WF_Order_Approve').suggestion, 'OrderApprove');
+  // The workflow rule is a line in the rules text: without it, workflows are not checked.
+  const withoutWorkflows = naming.parseRules(naming.DEFAULT_RULES.replace(/^workflow style:.*$/m, ''));
+  assert.equal(naming.checkNaming({ documents: mxm.SAMPLE_DOCUMENTS }, withoutWorkflows).filter((i) => i.kind === 'Workflow').length, 0);
+  assert.ok(naming.isChecked('Workflow', naming.parseRules(naming.DEFAULT_RULES)));
+  assert.ok(!naming.isChecked('Workflow', withoutWorkflows));
+  assert.ok(!naming.isChecked('Page', naming.parseRules('')));
+  assert.throws(() => naming.parseRules('workflow style: camelCase'), /only style is PascalCase/);
+});
+
+test('cron accepts 7 as Sunday in ranges', () => {
+  assert.deepEqual([...cron.parseCron('0 0 * * 1-7').weekdays].sort(), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...cron.parseCron('0 0 * * 5-7').weekdays].sort(), [0, 5, 6]);
+  assert.deepEqual([...cron.parseCron('0 0 * * 7').weekdays], [0]);
+});
+
+test('JSON keeps integers beyond 2^53 exactly', async () => {
+  const json = await lib('json');
+  const text = '{"id": 281474976710657123, "small": 12, "price": 1.5, "label": "99999999999999999999"}';
+  assert.deepEqual(json.unsafeIntegers(text), ['281474976710657123']);
+  assert.equal(JSON.stringify(json.parseJson(text)), '{"id":281474976710657123,"small":12,"price":1.5,"label":"99999999999999999999"}');
+  const { sortDeep } = await import('../../src/toolbox/tools/converters.js');
+  assert.equal(JSON.stringify(sortDeep(json.parseJson('{"b":1,"a":281474976710657123}'))), '{"a":281474976710657123,"b":1}');
+});
+
+test('regex capture names follow group numbers', async () => {
+  const { captureNames } = await lib('regex');
+  assert.deepEqual(captureNames(String.raw`(\d+)-(?<y>\d+)`), [null, 'y']);
+  assert.deepEqual(captureNames(String.raw`(?:a)(?<x>b)(?=c)(?<!d)(e)\(f\)[(\]](?<z>g)`), ['x', null, 'z']);
+});
+
+const BIG = '281474976710657123';
+
+test('JSON <-> YAML keeps Mendix object IDs exact', async () => {
+  const { jsonToYaml, yamlToJson } = await import('../../src/toolbox/tools/converters.js');
+  assert.equal(jsonToYaml(`{"id": ${BIG}, "count": 2}`), `id: ${BIG}\ncount: 2\n`);
+  assert.equal(yamlToJson(`id: ${BIG}\ncount: 2\n`, { indent: 0 }), `{"id":${BIG},"count":2}`);
+  assert.equal(yamlToJson(`id: ${BIG}\ncount: 2\n`, { indent: 0, sort: true }), `{"count":2,"id":${BIG}}`);
+});
+
+test('JSON <-> CSV keeps Mendix object IDs exact', () => {
+  const rows = table.jsonToRows(`[{"id": ${BIG}, "name": "a", "nested": {"ref": ${BIG}}}]`);
+  assert.equal(table.toDelimited(rows), `id,name,nested.ref\n${BIG},a,${BIG}`);
+  assert.equal(JSON.stringify(table.parseDelimited(`id,n\n${BIG},7\n`)), `[{"id":${BIG},"n":7}]`);
+});
+
+test('JSONPath keeps Mendix object IDs exact', async () => {
+  const { queryJson } = await import('../../src/toolbox/tools/testers.js');
+  const json = `{"items": [{"id": ${BIG}}, {"id": 1}]}`;
+  assert.equal(queryJson(json, '$..id').text.replace(/\s/g, ''), `[${BIG},1]`);
+  assert.equal(queryJson(json, '$.items[?(@.id > 2)].id').text.replace(/\s/g, ''), `[${BIG}]`);
+  assert.equal(queryJson(json, '$..*').count, 5); // the array, two objects, two IDs: no extra node inside the big ID
+});
+
+test('JWT signing and decoding keep Mendix object IDs exact', async () => {
+  const json = await lib('json');
+  const token = await jwt.signJwt({ alg: 'HS256', typ: 'JWT' }, json.parseJson(`{"sub": ${BIG}}`), 'secret');
+  assert.match(enc.utf8Decode(enc.base64ToBytes(token.split('.')[1])), new RegExp(BIG));
+  assert.equal(JSON.stringify(jwt.decodeJwt(token).payload), `{"sub":${BIG}}`);
+  assert.ok(await jwt.verifyJwt(token, 'secret'));
+});
+
+test('JSONPath filters match Mendix object IDs and explain arithmetic', async () => {
+  const { queryJson, bigIntLiterals } = await import('../../src/toolbox/tools/testers.js');
+  const json = `{"items": [{"id": ${BIG}, "price": 8.5}, {"id": 1, "price": 12}]}`;
+  assert.equal(queryJson(json, `$.items[?(@.id == ${BIG})].id`).text.replace(/\s/g, ''), `[${BIG}]`);
+  assert.equal(queryJson(json, `$.items[?(@.id > 281474976710657000)].id`).text.replace(/\s/g, ''), `[${BIG}]`);
+  assert.equal(queryJson(json, '$.items[?(@.price < 10.5)].price').text.replace(/\s/g, ''), '[8.5]');
+  assert.throws(() => queryJson(json, '$.items[?(@.id + 1 > 2)]'), /Arithmetic on integers beyond 2\^53/);
+  assert.deepEqual(bigIntLiterals(`$[?(@.code == '${BIG}')]`).sandbox, {});
+});
+
+test('YAML keeps a Mendix object ID used as a key', async () => {
+  const { yamlToJson } = await import('../../src/toolbox/tools/converters.js');
+  assert.equal(yamlToJson(`${BIG}: order\nother: 1\n`, { indent: 0 }), `{"${BIG}":"order","other":1}`);
+  assert.equal(yamlToJson(`ids:\n  - ${BIG}\n`, { indent: 0 }), `{"ids":[${BIG}]}`);
+});
+
+test('regex runner: blocked workers, job errors, inline limit and the running marker', async () => {
+  const rx = await lib('regex');
+  // A fake worker: 'start' decides what happens when it starts.
+  const fakeWorker = (start) => () => {
+    const w = { terminated: false, terminate() { w.terminated = true; }, postMessage(job) {
+      queueMicrotask(() => {
+        if (start === 'fail') { w.onerror?.({ message: 'blocked by CSP', preventDefault() {} }); return; }
+        w.onmessage?.({ data: { type: 'ready' } });
+        if (start === 'job-error') w.onmessage?.({ data: { type: 'error', message: 'job failed' } });
+        else w.onmessage?.({ data: { type: 'result', result: rx.matchRegex(job) } });
+      });
+    } };
+    return w;
+  };
+  const calls = [];
+  const blocked = rx.createRegexRunner({ makeWorker: fakeWorker('fail'), onInlineStart: () => calls.push('start'), onInlineEnd: () => calls.push('end') });
+  const r = await blocked.run('a', 'g', 'banana', '');
+  assert.equal(r.matches.length, 3);
+  assert.ok(r.inline && blocked.blocked);
+  assert.deepEqual(calls, ['start', 'end']);
+  const long = await blocked.run('x+', 'g', 'x'.repeat(rx.INLINE_LIMIT + 50), '');
+  assert.ok(long.truncated);
+  assert.equal(long.matches[0][0].length, rx.INLINE_LIMIT);
+
+  const failing = rx.createRegexRunner({ makeWorker: fakeWorker('job-error') });
+  await assert.rejects(failing.run('a', 'g', 'a', ''), /job failed/);
+  assert.equal(failing.blocked, false); // an error in a job does not turn the worker off
+
+  const ok = rx.createRegexRunner({ makeWorker: fakeWorker('ok') });
+  const res = await ok.run(String.raw`(\d+)`, 'g', 'a1b22', '');
+  assert.deepEqual(res.matches.map((m) => m[1]), ['1', '22']);
+  assert.ok(!res.inline);
+
+  const throwing = rx.createRegexRunner({ makeWorker: () => { throw new Error('no workers'); } });
+  assert.ok((await throwing.run('a', '', 'a', '')).inline);
+});

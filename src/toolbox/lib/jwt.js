@@ -2,9 +2,10 @@
 
 import { base64ToBytes, bytesToBase64, utf8Decode, utf8Encode } from './encoding.js';
 import { pemToDer } from './asn1.js';
+import { parseJson } from './json.js';
 
 const b64url = (bytes) => bytesToBase64(bytes, { urlSafe: true, padding: false });
-const jsonPart = (part) => JSON.parse(utf8Decode(base64ToBytes(part)));
+const jsonPart = (part) => parseJson(utf8Decode(base64ToBytes(part))); // keeps 64-bit IDs exact
 
 export function decodeJwt(token) {
   const parts = token.trim().split('.');

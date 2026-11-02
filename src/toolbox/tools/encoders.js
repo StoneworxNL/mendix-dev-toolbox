@@ -3,6 +3,7 @@ import { h, clear, textArea, select, checkbox, input, field, options, split, sta
 import { utf8Encode, utf8Decode, bytesToBase64, base64ToBytes, bytesToHex, htmlEncode, htmlDecode } from '../lib/encoding.js';
 import { decodeJwt, signJwt, verifyJwt, CLAIMS } from '../lib/jwt.js';
 import { pemToDer, decodeCertificate } from '../lib/asn1.js';
+import { parseJson } from '../lib/json.js';
 
 const C = 'Encoders & decoders';
 const direction = (persist = 'dir') => select({ encode: 'Encode', decode: 'Decode' }, { persist, label: 'Direction' });
@@ -135,7 +136,7 @@ const jwt = {
       token.el.readOnly = encoding; header.el.readOnly = !encoding; payload.el.readOnly = !encoding;
       if (encoding) {
         if (!key.value) { sig.info('Enter a secret to sign the token.'); token.value = ''; return; }
-        token.value = await signJwt(JSON.parse(header.value), JSON.parse(payload.value), key.value, { secretIsBase64: b64.checked });
+        token.value = await signJwt(parseJson(header.value), parseJson(payload.value), key.value, { secretIsBase64: b64.checked });
         sig.ok('Signed.');
         return;
       }

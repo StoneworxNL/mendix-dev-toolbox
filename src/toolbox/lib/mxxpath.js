@@ -25,7 +25,8 @@ const DATE_TOKENS = {
   EndOfCurrentYear: (d, o, c) => c.end(d, 'year'),
 };
 
-const PERIODS = { MillisecondLength: 'ms', SecondLength: 's', MinuteLength: 'min', HourLength: 'h', DayLength: 'd', WeekLength: 'w', MonthLength: 'mo', YearLength: 'y' };
+// The period tokens Mendix documents; there is no [%MillisecondLength%].
+const PERIODS = { SecondLength: 's', MinuteLength: 'min', HourLength: 'h', DayLength: 'd', WeekLength: 'w', MonthLength: 'mo', YearLength: 'y' };
 
 const humanize = (k) => k.replace(/([A-Z])/g, ' $1').trim().toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
@@ -83,7 +84,7 @@ function addPeriod(d, unit, n, c) {
   if (unit === 'w') return c.addDays(d, 7 * n);
   if (unit === 'mo') return c.addMonths(d, n);
   if (unit === 'y') return c.addMonths(d, 12 * n);
-  return new Date(d.getTime() + n * { ms: 1, s: 1e3, min: 6e4, h: 36e5 }[unit]);
+  return new Date(d.getTime() + n * { s: 1e3, min: 6e4, h: 36e5 }[unit]);
 }
 
 const isUtcToken = (name) => name.endsWith('UTC') && DATE_TOKENS[name.slice(0, -3)] !== undefined;
@@ -156,6 +157,7 @@ export function lintConstraint(src, options = {}) {
     }
     if (c === '[' && text[i + 1] === '%') {
       const end = text.indexOf('%]', i);
+      if (end < 0) { add('error', 'Unterminated [% token: close it with %]', i); break; }
       const name = text.slice(i + 2, end);
       add('error', `Put tokens in quotes: '[%${name}%]'`, i);
       i = end + 1;
@@ -176,14 +178,14 @@ export function lintConstraint(src, options = {}) {
 
   // Words outside strings
   const outside = text.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (m) => ' '.repeat(m.length));
-  for (const m of outside.matchAll(/([A-Za-z][\w-]*)\s*\(/g)) {
+  for (const m of outside.matchAll(/(?<![\w-])([A-Za-z][\w-]*)\s*\(/g)) { // start at a word, or long text backtracks quadratically
     if (!KNOWN_FUNCTIONS.has(m[1])) add('warning', `Unknown function ${m[1]}()`, m.index);
   }
   for (const m of outside.matchAll(/(?<![\w./])(AND|OR|And|Or|NOT|Not)\b(?![\w./])/g)) add('error', `Operators are lower case: ${m[1].toLowerCase()}`, m.index);
   for (const m of outside.matchAll(/\bdiv\b/g)) add('hint', 'div works in XPath run on the server (microflows, data sources), not in client-side constraints', m.index);
   for (const m of outside.matchAll(/(?<![\w./'])(true|false)\b(?![\w./]|\s*\()/g)) add('warning', `Write ${m[1]}() with parentheses`, m.index);
-  for (const m of outside.matchAll(/(?<![\w./])(NULL|Null)\b(?![\w./])/g)) add('hint', 'Write empty for an empty value: [Name = empty]', m.index);
-  for (const m of outside.matchAll(/=\s*null\b/g)) add('hint', 'Write empty for an empty value: [Name = empty]', m.index);
+  // NULL and empty are both keywords; other spellings are not.
+  for (const m of outside.matchAll(/=\s*(null|Null)\b/g)) add('warning', `Write empty or NULL, not ${m[1]}: [Name = empty]`, m.index);
   return { issues: issues.sort((a, b) => a.index - b.index), dates };
 }
 
