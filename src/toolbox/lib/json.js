@@ -20,8 +20,20 @@ export function parseJson(text) {
   return JSON.parse(text, (key, value, context) => (typeof value === 'number' && !Number.isSafeInteger(value) && INTEGER.test(context?.source ?? '') ? JSON.rawJSON(context.source) : value));
 }
 
-/** Whether a parsed value is a number kept as raw JSON. */
-export const isRawNumber = (v) => LOSSLESS && JSON.isRawJSON(v);
+/**
+ * An exact large integer that also works where JavaScript turns values into text, such as YAML
+ * mapping keys: String() gives its digits and JSON.stringify writes them unquoted.
+ */
+export class ExactInteger {
+  constructor(digits) { this.rawJSON = digits; Object.freeze(this); }
+  toString() { return this.rawJSON; }
+  toJSON() { return JSON.rawJSON(this.rawJSON); }
+  // js-yaml turns keys that report as [object Object] into that text; this one reports differently.
+  get [Symbol.toStringTag]() { return 'ExactInteger'; }
+}
+
+/** Whether a parsed value is a large integer kept exactly (raw JSON or ExactInteger). */
+export const isRawNumber = (v) => LOSSLESS && (JSON.isRawJSON(v) || v instanceof ExactInteger);
 
 /**
  * A number for the integer text `digits`: a plain number when that is exact, otherwise raw JSON
