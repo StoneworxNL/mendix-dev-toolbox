@@ -3,18 +3,12 @@ import { formatOql, lintOql, buildSelect, FUNCTIONS as OQL_FUNCTIONS } from '../
 import { lintConstraint, relativeDateConstraint, resolveDateToken, evaluateDateExpression, TOKENS, FUNCTIONS as XPATH_FUNCTIONS, DATE_TOKEN_NAMES, PERIOD_NAMES } from '../lib/mxxpath.js';
 import { formatDate, parseDate, mendixLiteral, LETTERS } from '../lib/datepattern.js';
 import { normalizeModel, associationsOf, allAttributes, typeLabel, toMermaid, toMarkdown, SAMPLE_UNITS, SAMPLE_ENUMERATIONS, SAMPLE_DOCUMENTS } from '../lib/mxmodel.js';
+import { readApp, describeStats } from '../lib/mxapp.js';
 import { checkNaming, parseRules, isChecked, DEFAULT_RULES } from '../lib/naming.js';
 
 const C = 'Mendix';
 
 // --- App model access -----------------------------------------------------------
-
-// Document kinds for the naming check, by model API.
-const DOCUMENT_APIS = [
-  ['microflows', 'Microflow'], ['nanoflows', 'Nanoflow'], ['pages', 'Page'], ['layouts', 'Layout'], ['snippets', 'Snippet'],
-  ['enumerations', 'Enumeration'], ['importMappings', 'Import mapping'], ['exportMappings', 'Export mapping'],
-  ['xmlSchemas', 'XML schema'], ['jsonStructures', 'JSON structure'], ['workflows', 'Workflow'],
-];
 
 const cache = new Map();
 
@@ -32,39 +26,7 @@ function loadApp(ctx, { refresh = false, marketplace: withMarketplace = false } 
       const modules = [{ name: 'Sales', marketplace: false }, { name: 'Administration', marketplace: false }];
       return { connected: false, modules, model: normalizeModel(SAMPLE_UNITS, SAMPLE_ENUMERATIONS), documents: SAMPLE_DOCUMENTS, unavailable: [] };
     }
-    const m = sp.app.model;
-    const mods = await m.modules.getModules();
-    const marketplace = new Set(mods.filter((x) => x.fromAppStore).map((x) => x.name));
-    const modules = mods.map((x) => ({ name: x.name, marketplace: x.fromAppStore })).filter((x) => x.name !== 'System').sort((a, b) => a.name.localeCompare(b.name));
-    const wanted = (moduleName) => moduleName && moduleName !== 'System' && (withMarketplace || !marketplace.has(moduleName));
-
-    const loadUnits = async (api, type) => {
-      const infos = (await api.getUnitsInfo()).filter((i) => wanted(i.moduleName));
-      if (!infos.length) return [];
-      const ids = infos.map((i) => i.$ID);
-      // Newer API versions document loadUnits(type, ids); this one has loadAll(filter, max).
-      const units = typeof api.loadUnits === 'function' ? await api.loadUnits(type, ids) : await api.loadAll((u) => ids.includes(u.$ID), ids.length);
-      const moduleOf = new Map(infos.map((i) => [i.$ID, i.moduleName]));
-      return units.map((u, k) => ({ unit: u, moduleName: moduleOf.get(u.$ID) ?? infos[k]?.moduleName ?? '' }));
-    };
-    const unavailable = [];
-    const [domainModels, enumerations] = await Promise.all([
-      loadUnits(m.domainModels, 'DomainModels$DomainModel'),
-      loadUnits(m.enumerations, 'Enumerations$Enumeration').catch(() => { unavailable.push('Enumeration'); return []; }),
-    ]);
-    const model = normalizeModel(
-      domainModels.map(({ unit, moduleName }) => ({ moduleName, domainModel: unit, marketplace: marketplace.has(moduleName) })),
-      enumerations.map(({ unit, moduleName }) => ({ moduleName, name: unit.name, values: (unit.values ?? []).map((v) => v.name), marketplace: marketplace.has(moduleName) })),
-    );
-    const documents = [];
-    await Promise.all(DOCUMENT_APIS.map(async ([api, kind]) => {
-      try {
-        for (const i of await m[api].getUnitsInfo()) if (wanted(i.moduleName) && i.name) documents.push({ module: i.moduleName, kind, name: i.name, marketplace: marketplace.has(i.moduleName) });
-      } catch {
-        unavailable.push(kind); // not in this Studio Pro version's API
-      }
-    }));
-    return { connected: true, modules, model, documents, unavailable: [...new Set(unavailable)].sort() };
+    return readApp(sp, { marketplace: withMarketplace });
   })();
   cache.set(key, promise);
   promise.catch(() => cache.delete(key));
@@ -73,11 +35,13 @@ function loadApp(ctx, { refresh = false, marketplace: withMarketplace = false } 
 
 /**
  * "Your app" or "sample model" line with a refresh button. Each time a tool opens it reads the
- * model again, so edits made in Studio Pro since the last visit show up.
+ * model again, so edits made in Studio Pro since the last visit show up. "Details" shows what
+ * each loading stage found, to tell why an app shows fewer entities than expected.
  * @param {{ marketplace?: () => boolean }} [options]
  */
 function sourceBar(ctx, onLoad, { marketplace = () => false } = {}) {
   const text = h('span', { class: 'hint' }, 'Loading the app model…');
+  const details = h('div', { class: 'hint mono source-details', hidden: true });
   let latest = 0;
   const reload = (refresh) => {
     const mine = ++latest;
@@ -87,12 +51,18 @@ function sourceBar(ctx, onLoad, { marketplace = () => false } = {}) {
       text.textContent = app.connected
         ? `Your app: ${app.model.entities.length} entities in ${new Set(app.model.entities.map((e) => e.module)).size} modules${marketplace() ? ', Marketplace modules included' : ''}.`
         : 'Sample model. Open the toolbox from Studio Pro (Extensions > Developer Toolbox) to use your app.';
+      details.textContent = describeStats(app);
       onLoad(app);
-    }, (e) => { if (mine === latest) text.textContent = `Could not read the app model: ${e.message ?? e}`; });
+    }, (e) => {
+      if (mine !== latest) return;
+      text.textContent = `Could not read the app model: ${e.message ?? e}`;
+      details.textContent = String(e?.stack ?? e);
+    });
   };
   // After the tool's saved options (like "Marketplace modules") are restored.
   queueMicrotask(() => reload(true));
-  const root = h('div', { class: 'source-bar' }, text, ctx?.studioPro && button('Refresh', () => reload(true), { kind: 'ghost', iconName: 'refresh' }));
+  const toggle = ctx?.studioPro && button('Details', () => { details.hidden = !details.hidden; }, { kind: 'ghost', title: 'Show what each loading stage found' });
+  const root = h('div', { class: 'source-bar' }, text, ctx?.studioPro && button('Refresh', () => reload(true), { kind: 'ghost', iconName: 'refresh' }), toggle, details);
   return Object.assign(root, { reload });
 }
 

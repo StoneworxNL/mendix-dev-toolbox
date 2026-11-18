@@ -206,6 +206,7 @@ dd:hover .mini, .mini:focus { opacity: 1; }
 
 /* Mendix tools */
 .source-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.source-details { flex-basis: 100%; white-space: pre-wrap; word-break: break-word; }
 .issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .issues li { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius); background: var(--surface-2); }
 .sev { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
