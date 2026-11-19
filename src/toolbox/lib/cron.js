@@ -37,7 +37,8 @@ export function parseCron(expression) {
   if (fields.length !== 6) throw new Error('Expected 5 fields (or 6 with seconds).');
   const [sec, min, hour, dom, mon, dow] = fields;
   const lastDay = dom.toUpperCase() === 'L';
-  const dowSet = parseField(dow.replace(/7/g, '0'), 0, 6, DAYS);
+  // Both 0 and 7 mean Sunday, so ranges like 1-7 and 5-7 are valid.
+  const dowSet = new Set([...parseField(dow, 0, 7, DAYS)].map((d) => d % 7));
   return {
     seconds: parseField(sec, 0, 59),
     minutes: parseField(min, 0, 59),

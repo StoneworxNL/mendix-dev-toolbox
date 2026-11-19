@@ -4,6 +4,8 @@ import DOMPurify from 'dompurify';
 import { h, clear, textArea, select, checkbox, input, field, options, split, status, live, kv, card, button, copyText } from '../ui.js';
 import { ESCAPE_MODES, escapeText, unescapeText } from '../lib/encoding.js';
 import { CASES, LINE_ACTIONS, analyze } from '../lib/textcase.js';
+import { parseJson } from '../lib/json.js';
+import { captureNames, createRegexRunner, WORKER_SOURCE, INLINE_LIMIT } from '../lib/regex.js';
 
 const C = 'Text';
 
@@ -64,7 +66,7 @@ const diff = {
       const opts = { ignoreCase: ignoreCase.checked, ignoreWhitespace: ignoreWs.checked };
       let parts;
       if (mode.value === 'json') {
-        const norm = (t) => JSON.stringify(JSON.parse(t), null, 2);
+        const norm = (t) => JSON.stringify(parseJson(t), null, 2); // keeps 64-bit IDs exact
         left = norm(left); right = norm(right);
         parts = Diff.diffLines(left, right, opts);
       } else if (mode.value === 'lines') parts = Diff.diffLines(left, right, { ...opts, newlineIsToken: false });
@@ -106,25 +108,56 @@ const diff = {
   },
 };
 
+// Remote images in the preview would be fetched from the internet, so they stay off unless asked for.
+let allowRemoteImages = false;
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'IMG' && !allowRemoteImages && /^\s*(https?:)?\/\//i.test(node.getAttribute('src') ?? '')) {
+    node.setAttribute('data-blocked-src', node.getAttribute('src'));
+    node.removeAttribute('src');
+    node.removeAttribute('srcset');
+    node.setAttribute('alt', `${node.getAttribute('alt') || 'image'} (remote image not loaded)`);
+  }
+});
+
 const markdown = {
   id: 'markdown', name: 'Markdown preview', category: C, icon: 'markdown',
   description: 'Write GitHub-flavored Markdown and see it rendered; copy the HTML.',
   keywords: 'md readme gfm render html',
   render(root) {
     const src = textArea({ label: 'Markdown', persist: 'input', wrap: true, value: '# Hello Mendix\n\n- [x] Studio Pro extension\n- [ ] Ship it\n\n| Tool | Category |\n| --- | --- |\n| JSON formatter | Formatters |\n\n```js\nconsole.log("hi");\n```\n' });
+    const remote = checkbox('Load remote images', { persist: 'remote' });
+    remote.root.title = 'Images from the internet are fetched only when this is on.';
     const preview = h('article', { class: 'markdown-body' });
     let html = '';
     const head = h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, 'Preview'), h('div', { class: 'pane-tools' }, button('Copy HTML', () => copyText(html), { kind: 'ghost', iconName: 'copy' })));
-    clear(root, split(src.root, h('div', { class: 'pane' }, head, preview)));
+    clear(root, options(remote.root), split(src.root, h('div', { class: 'pane' }, head, preview)));
     return live(root, () => {
-      html = DOMPurify.sanitize(marked.parse(src.value, { gfm: true, breaks: false }));
-      preview.innerHTML = html;
+      const md = marked.parse(src.value, { gfm: true, breaks: false });
+      allowRemoteImages = true;
+      html = DOMPurify.sanitize(md);
+      allowRemoteImages = remote.checked;
+      preview.innerHTML = remote.checked ? html : DOMPurify.sanitize(md);
+      allowRemoteImages = false;
       for (const a of preview.querySelectorAll('a')) { a.target = '_blank'; a.rel = 'noopener'; }
     });
   },
 };
 
 const FLAGS = { g: 'global', i: 'ignore case', m: 'multiline', s: 'dot matches newline', u: 'unicode', y: 'sticky' };
+
+// Set while matching runs inline (when the host blocks workers). If it is still set when the tool
+// opens, the last run froze the page, so the saved pattern is not run again by itself.
+const RUNNING_KEY = 'dtb:tool:regex:running';
+const marker = {
+  get: () => { try { return localStorage.getItem(RUNNING_KEY) !== null; } catch { return false; } },
+  set: () => { try { localStorage.setItem(RUNNING_KEY, '1'); } catch { /* storage blocked */ } },
+  clear: () => { try { localStorage.removeItem(RUNNING_KEY); } catch { /* storage blocked */ } },
+};
+const regexRunner = createRegexRunner({
+  makeWorker: () => new Worker(URL.createObjectURL(new Blob([WORKER_SOURCE], { type: 'text/javascript' }))),
+  onInlineStart: marker.set,
+  onInlineEnd: marker.clear,
+});
 
 const regex = {
   id: 'regex', name: 'Regex tester', category: C, icon: 'regex',
@@ -143,33 +176,38 @@ const regex = {
     const cheats = [['\\d', 'digit'], ['\\w', 'word char'], ['\\s', 'whitespace'], ['.', 'any char'], ['^ $', 'start / end'], ['[abc]', 'set'], ['(…)', 'group'], ['(?<name>…)', 'named group'], ['(?:…)', 'non-capturing'], ['a|b', 'either'], ['* + ?', '0+, 1+, 0-1'], ['{2,5}', 'count'], ['(?=…)', 'lookahead'], ['\\b', 'word boundary']];
     clear(root, field('Pattern', pattern), options(...flagBoxes.map(([, c]) => c.root)), stat.root, split(src.root, h('div', { class: 'pane' }, h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, 'Matches')), highlight)), groups, field('Replace with', replace), replaced.root,
       card('Cheat sheet', h('div', { class: 'cheats' }, cheats.map(([t, d]) => h('span', {}, h('code', {}, t), ` ${d}`)))));
-    return live(root, () => {
-      clear(groups); clear(highlight);
-      replaced.value = '';
-      if (!pattern.value) { highlight.textContent = src.value; return; }
+    const run = live(root, async () => {
+      let text = src.value;
+      if (!pattern.value) { clear(groups); clear(highlight, text); replaced.value = ''; return; }
       const flags = flagBoxes.filter(([, c]) => c.checked).map(([f]) => f).join('');
-      const re = new RegExp(pattern.value, flags);
-      const text = src.value;
-      const matches = [];
-      if (re.global || re.sticky) {
-        for (const m of text.matchAll(re.global ? re : new RegExp(re.source, `${flags}g`))) { matches.push(m); if (matches.length > 5000) break; }
-      } else { const m = re.exec(text); if (m) matches.push(m); }
+      new RegExp(pattern.value, flags); // syntax errors show right away
+      const { matches, replacedText, inline, truncated } = await regexRunner.run(pattern.value, flags, text, replace.value);
+      if (truncated) text = text.slice(0, INLINE_LIMIT);
+      marker.clear(); // a run finished, so the saved pattern is safe to run on open
+      clear(groups); clear(highlight);
+      replaced.value = replacedText ?? '';
       let last = 0;
       for (const m of matches) {
         highlight.append(text.slice(last, m.index), h('mark', { title: `Match at ${m.index}` }, m[0] || '∅'));
         last = m.index + m[0].length;
       }
       highlight.append(text.slice(last));
-      stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}`);
+      const note = truncated ? ` in the first ${INLINE_LIMIT.toLocaleString('en')} characters: Studio Pro blocks the background worker, so long text is cut and slow patterns are not stopped` : inline ? ' (Studio Pro blocks the background worker, so slow patterns are not stopped)' : '';
+      stat.info(`${matches.length} match${matches.length === 1 ? '' : 'es'}${note}`);
       if (matches.length) {
-        const names = matches[0].groups ? Object.keys(matches[0].groups) : [];
+        const names = captureNames(pattern.value);
         const cols = matches[0].length - 1;
         groups.append(card('Groups', h('div', { class: 'grid-wrap' }, h('table', { class: 'grid' },
           h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Index'), h('th', {}, 'Match'), Array.from({ length: cols }, (_, i) => h('th', {}, names[i] ? `${i + 1} ‹${names[i]}›` : `${i + 1}`)))),
           h('tbody', {}, matches.slice(0, 200).map((m, n) => h('tr', {}, h('td', {}, n + 1), h('td', {}, m.index), h('td', { class: 'mono' }, m[0]), Array.from({ length: cols }, (_, i) => h('td', { class: 'mono' }, m[i + 1] ?? '—')))))))));
       }
-      if (replace.value) replaced.value = text.replace(re, replace.value);
     }, stat);
+    // On open: if the last inline run never finished, it froze the page; wait for the user.
+    return () => {
+      if (!marker.get()) { run(); return; }
+      stat.info("The last run didn't finish, so the saved pattern was not run again. Change it if it is too slow, then press Run.");
+      stat.root.append(' ', button('Run', () => { marker.clear(); run(); }, { kind: 'ghost' }));
+    };
   },
 };
 

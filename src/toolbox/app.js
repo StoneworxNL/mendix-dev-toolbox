@@ -6,13 +6,15 @@ import generators from './tools/generators.js';
 import text from './tools/text.js';
 import testers from './tools/testers.js';
 import graphics from './tools/graphics.js';
+import mendix from './tools/mendix.js';
 
-export const TOOLS = [...converters, ...encoders, ...formatters, ...generators, ...text, ...testers, ...graphics];
+export const TOOLS = [...mendix, ...converters, ...encoders, ...formatters, ...generators, ...text, ...testers, ...graphics];
 const CATEGORIES = [...new Set(TOOLS.map((t) => t.category))];
 
 const store = {
   get(key, fallback = null) { try { const v = localStorage.getItem(`dtb:${key}`); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(`dtb:${key}`, JSON.stringify(value)); } catch { /* storage full or blocked */ } },
+  remove(key) { try { localStorage.removeItem(`dtb:${key}`); } catch { /* blocked */ } },
 };
 
 // Filled in by mountToolbox once the shell exists.
@@ -33,6 +35,8 @@ function matches(tool, q) {
 
 // Routing lives in memory: the host page belongs to Studio Pro, so the toolbox leaves its URL alone.
 let currentId = '';
+// Passed to every tool; `studioPro` is the Studio Pro API, or null on the standalone page.
+let toolContext = { studioPro: null };
 function go(id) {
   currentId = id;
   route();
@@ -72,10 +76,25 @@ function renderHome() {
     }));
 }
 
+// Versions before 0.3.0 saved the text of sensitive tools; remove it once.
+function forgetSensitiveInputs() {
+  if (store.get('cleared-sensitive')) return;
+  try {
+    const prefixes = TOOLS.filter((t) => t.sensitive).map((t) => `dtb:tool:${t.id}:`);
+    for (const k of Object.keys(localStorage)) if (prefixes.some((p) => k.startsWith(p))) localStorage.removeItem(k);
+  } catch { /* storage blocked */ }
+  store.set('cleared-sensitive', true);
+}
+
+const isFreeText = (el) => el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /^(text|search|password|)$/.test(el.type));
+
 // Restore every [data-persist] control of a tool and save it again whenever it changes.
+// Tools marked `sensitive` (tokens, keys, encoded payloads) keep only their options: their text
+// would otherwise stay on disk in Studio Pro's browser profile.
 function bindPersistence(tool, root) {
   for (const el of root.querySelectorAll('[data-persist]')) {
     const key = `tool:${tool.id}:${el.dataset.persist}`;
+    if (tool.sensitive && isFreeText(el)) { store.remove(key); continue; }
     const saved = store.get(key);
     if (saved !== null) {
       if (el.type === 'checkbox') el.checked = saved;
@@ -92,7 +111,7 @@ function renderTool(tool) {
   const body = h('div', { class: 'tool-body' });
   const star = h('button', { type: 'button', class: `star${favorites.has(tool.id) ? ' on' : ''}`, title: 'Add to favorites', 'aria-pressed': String(favorites.has(tool.id)), onclick: () => { toggleFavorite(tool.id); star.classList.toggle('on'); star.setAttribute('aria-pressed', String(favorites.has(tool.id))); } }, icon('star'));
   clear(els.main, h('header', { class: 'tool-head' }, h('div', { class: 'tool-icon' }, icon(tool.icon)), h('div', { class: 'grow' }, h('h1', {}, tool.name), h('p', { class: 'lead' }, tool.description)), star), body);
-  const run = tool.render(body);
+  const run = tool.render(body, toolContext);
   bindPersistence(tool, body);
   if (typeof run === 'function') run();
   store.set('last', tool.id);
@@ -110,6 +129,15 @@ function route() {
 
 // "auto" follows Studio Pro's theme when the host tells us, otherwise the OS setting.
 let hostTheme = null;
+let themeChoice = 'auto';
+
+/** Called when Studio Pro's theme may have changed; "auto" follows it. */
+export function setHostTheme(theme) {
+  if (theme === hostTheme) return;
+  hostTheme = theme;
+  if (els.theme) applyTheme(themeChoice);
+}
+
 function applyTheme(theme) {
   const resolved = theme === 'auto' ? hostTheme : theme;
   if (resolved) document.documentElement.dataset.theme = resolved;
@@ -125,10 +153,12 @@ const iconButton = (id, label, name) => h('button', { id, type: 'button', class:
 /**
  * Builds the toolbox inside `root`.
  * @param {HTMLElement} root
- * @param {{ hostTheme?: 'light' | 'dark' | null, initialTool?: string }} options
+ * @param {{ hostTheme?: 'light' | 'dark' | null, initialTool?: string, studioPro?: any }} options
  */
-export function mountToolbox(root, { hostTheme: theme = null, initialTool = '' } = {}) {
+export function mountToolbox(root, { hostTheme: theme = null, initialTool = '', studioPro = null } = {}) {
   hostTheme = theme;
+  toolContext = { studioPro };
+  forgetSensitiveInputs();
   els = {
     nav: h('nav', { id: 'nav', 'aria-label': 'Tools' }),
     main: h('main', { id: 'main' }),
@@ -146,12 +176,12 @@ export function mountToolbox(root, { hostTheme: theme = null, initialTool = '' }
     h('div', { class: 'content' }, h('div', { class: 'topbar' }, els.menu, h('span', {}, 'Developer Toolbox')), els.main));
   clear(root, els.shell);
 
-  let current = store.get('theme', 'auto');
-  applyTheme(current);
+  themeChoice = store.get('theme', 'auto');
+  applyTheme(themeChoice);
   els.theme.addEventListener('click', () => {
-    current = { auto: 'light', light: 'dark', dark: 'auto' }[current];
-    store.set('theme', current);
-    applyTheme(current);
+    themeChoice = { auto: 'light', light: 'dark', dark: 'auto' }[themeChoice];
+    store.set('theme', themeChoice);
+    applyTheme(themeChoice);
   });
 
   els.menu.addEventListener('click', () => els.shell.classList.toggle('nav-open'));
